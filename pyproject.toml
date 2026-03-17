@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pawc-kit"
+version = "0.1.0"
+description = "PAWC Core: shared SDK for workflow models, state, layout, and orchestration"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "toon-formatter>=1.0",
+]
+
+[project.optional-dependencies]
+otel = [
+    "opentelemetry-api>=1.28.0",
+    "opentelemetry-sdk>=1.28.0",
+]
+semantic = [
+    "semantic-text-splitter>=0.18",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tests"]
+markers = [
+    "unit: fast isolated tests",
+    "integration: tests using real FS adapters",
+    "slow: tests that may take longer",
+]
+
+[tool.coverage.run]
+source = ["pawc_kit"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+
+[dependency-groups]
+dev = [
+    "pawc-kit[otel]",
+    "pyright>=1.1.408",
+    "pytest>=9.0.2",
+    "pytest-cov>=6.0",
+    "ruff>=0.15.6",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
