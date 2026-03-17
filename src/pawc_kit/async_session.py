@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
+from pawc_kit._util import UNSET, UnsetType
 from pawc_kit.adapters.factory import build_async_observer
 from pawc_kit.adapters.fs.artifact_store import AsyncFsArtifactStore
 from pawc_kit.adapters.fs.state_store import AsyncFsStateStore
@@ -20,8 +21,6 @@ from pawc_kit.ports.observers import AsyncWorkflowObserver
 from pawc_kit.workflow.engine import AsyncWorkflowEngine
 from pawc_kit.workflow.graph import PhaseGraph
 from pawc_kit.workflow.roles import AsyncExecutor, AsyncReviewer
-
-_UNSET: int = object()  # type: ignore[assignment]
 
 
 class AsyncWorkflowSession:
@@ -43,12 +42,12 @@ class AsyncWorkflowSession:
         graph: PhaseGraph | None = None,
         run_directory: str | None = None,
         state_filename: str | None = None,
-        observer: AsyncWorkflowObserver | None = _UNSET,  # type: ignore[assignment]
+        observer: AsyncWorkflowObserver | None | UnsetType = UNSET,
         clock: AsyncClock | None = None,
         confidence_threshold: int | None = None,
         max_iterations: int | None = None,
         max_feedback_rounds: int | None = None,
-        confidence_floor: int | None = _UNSET,  # type: ignore[assignment]
+        confidence_floor: int | None | UnsetType = UNSET,
         metadata: Mapping[str, Any] | None = None,
     ) -> AsyncWorkflowSession:
         """Load config from disk and return a ready async session."""
@@ -74,16 +73,18 @@ class AsyncWorkflowSession:
         graph: PhaseGraph | None = None,
         run_directory: str | None = None,
         state_filename: str | None = None,
-        observer: AsyncWorkflowObserver | None = _UNSET,  # type: ignore[assignment]
+        observer: AsyncWorkflowObserver | None | UnsetType = UNSET,
         clock: AsyncClock | None = None,
         confidence_threshold: int | None = None,
         max_iterations: int | None = None,
         max_feedback_rounds: int | None = None,
-        confidence_floor: int | None = _UNSET,  # type: ignore[assignment]
+        confidence_floor: int | None | UnsetType = UNSET,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
         self._config = config
         wf = config.workflow
+        self._confidence_floor: int | None
+        self._observer: AsyncWorkflowObserver | None
 
         if graph is not None:
             self._graph = graph
@@ -104,19 +105,18 @@ class AsyncWorkflowSession:
         self._max_feedback_rounds = (
             max_feedback_rounds if max_feedback_rounds is not None else wf.max_feedback_rounds
         )
-        # confidence_floor: None is a valid value (disabled). A module-level sentinel
-        # distinguishes "caller omitted the kwarg" (falls back to config) from
-        # "caller explicitly passed None" (disables the floor even if config has a value).
-        self._confidence_floor = (
-            wf.confidence_floor if confidence_floor is _UNSET else confidence_floor
-        )
+        # confidence_floor: None is a valid value (disabled). UNSET means "use config".
+        if confidence_floor is UNSET:
+            self._confidence_floor = wf.confidence_floor
+        else:
+            self._confidence_floor = cast(int | None, confidence_floor)
 
-        # observer: _UNSET -> auto-construct from config.observability;
-        #           None   -> no observer (suppresses any config-driven one);
-        #           instance -> use it directly.
-        self._observer: AsyncWorkflowObserver | None = (
-            build_async_observer(config.observability) if observer is _UNSET else observer
-        )
+        # observer: UNSET -> auto-construct from config.observability;
+        #           None   -> no observer; instance -> use it directly.
+        if observer is UNSET:
+            self._observer = build_async_observer(config.observability)
+        else:
+            self._observer = cast(AsyncWorkflowObserver | None, observer)
         self._clock = clock
         self._metadata = metadata
         self._role_bindings: dict[str, AsyncExecutor | AsyncReviewer] = {}

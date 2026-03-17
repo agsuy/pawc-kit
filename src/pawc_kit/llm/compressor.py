@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from enum import Enum
 
@@ -206,12 +207,17 @@ class SemanticCompressor:
 
     def _build_policies(self) -> dict[ChunkType, ChunkPolicyConfig]:
         merged: dict[ChunkType, ChunkPolicyConfig] = dict(_DEFAULT_POLICIES)
+        log = logging.getLogger("pawc_kit")
         for name, policy in self._config.policies.items():
             try:
                 chunk_type = ChunkType(name)
                 merged[chunk_type] = policy
             except ValueError:
-                pass
+                log.warning(
+                    "Unknown chunk policy name %r; valid: %s. Ignoring.",
+                    name,
+                    [e.value for e in ChunkType],
+                )
         return merged
 
     def compress(self, content: str, *, max_chars: int | None = None) -> str:

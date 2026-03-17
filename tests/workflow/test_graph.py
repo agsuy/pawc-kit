@@ -174,7 +174,7 @@ def test_get_returns_correct_phase() -> None:
 
 def test_get_raises_on_unknown_phase() -> None:
     graph = PhaseGraph([PhaseDefinition(phase_id="work", role_id="worker", kind="executor")])
-    with pytest.raises(KeyError, match="Unknown phase"):
+    with pytest.raises(ConfigurationError, match="Unknown phase"):
         graph.get("ghost")
 
 

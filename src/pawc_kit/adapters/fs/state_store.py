@@ -13,7 +13,12 @@ from pawc_kit.ports.state import SessionMetadata, StoredSession
 
 
 class FsStateStore:
-    """Persist state snapshots and optimistic revisions under a run directory."""
+    """Persist state snapshots and optimistic revisions under a run directory.
+
+    Designed for single-writer use (one process/thread per run directory).
+    Concurrent writers can race between the revision check and the write;
+    use one store instance per session and do not share run_dir across writers.
+    """
 
     def __init__(self, run_dir: str | Path, state_filename: str = "state.json") -> None:
         self._run_dir = Path(run_dir)

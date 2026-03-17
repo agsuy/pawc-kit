@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TypeVar
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from pawc_kit.contracts.config import RoleConfig, RootConfig
 from pawc_kit.contracts.errors import ConfigurationError
@@ -58,7 +58,7 @@ def load_yaml_config(
 
     try:
         return model.model_validate(raw)
-    except Exception as exc:
+    except ValidationError as exc:
         raise ConfigurationError(f"Invalid config in {path}: {exc}") from exc
 
 

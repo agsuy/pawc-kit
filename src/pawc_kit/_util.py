@@ -1,9 +1,19 @@
-"""Shared utilities: timestamps, semver, and identifier validation."""
+"""Shared utilities: timestamps, semver, identifier validation, and sentinels."""
 
 from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from typing import Final
+
+
+class UnsetType:
+    """Sentinel type for 'argument not provided' (distinct from None)."""
+
+    __slots__ = ()
+
+
+UNSET: Final[UnsetType] = UnsetType()
 
 SEMVER_PATTERN: re.Pattern[str] = re.compile(
     r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
