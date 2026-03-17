@@ -9,11 +9,24 @@ description = "PAWC Core: shared SDK for workflow models, state, layout, and orc
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
+keywords = ["workflow", "orchestration", "llm", "sdk"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Typing :: Typed",
+]
 dependencies = [
     "pydantic>=2.0",
     "pyyaml>=6.0",
     "toon-formatter>=1.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/agsuy/pawc-kit"
+Issues = "https://github.com/agsuy/pawc-kit/issues"
 
 [project.optional-dependencies]
 otel = [
