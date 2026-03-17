@@ -1,0 +1,22 @@
+skill:
+  name: test-workflow
+  version: "1.0.0"
+state_directory: root
+
+workflow:
+  phases:
+    - phase_id: work
+      role_id: worker-role
+      kind: executor
+      on_complete:
+        - review
+    - phase_id: review
+      role_id: reviewer-role
+      kind: review
+      can_request_changes_from:
+        - work
+  confidence_threshold: 85
+  max_iterations: 10
+  max_feedback_rounds: 3
+  run_directory: sessions/execution
+  state_filename: state.json
