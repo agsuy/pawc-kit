@@ -101,6 +101,8 @@ done <<< "$commit_subjects"
 
 if [[ -n "$override_title" ]]; then
     pr_title="$override_title"
+elif [[ "$commit_count" -eq 1 ]]; then
+    pr_title="$(echo "$commit_subjects" | head -1)"
 elif $has_breaking; then
     pr_title="feat!: <describe the breaking change>"
 elif $has_feat; then
@@ -132,14 +134,16 @@ Merging triggers an automated release: version bump, changelog, tag, GitHub Rele
 EOF
 )"
 
-# ── title placeholder warning ─────────────────────────────────────────────
+# ── title placeholder guard ───────────────────────────────────────────────
 
 if [[ "$pr_title" == *"<"* ]]; then
     echo ""
-    echo "⚠  Title contains a placeholder — edit it before the PR is ready to merge."
-    echo "   Suggested type: $pr_title"
-    echo "   Pass --title \"...: ...\" to set it now, or edit on GitHub."
+    echo "error: title requires a description — pass --title with a conventional commit." >&2
     echo ""
+    echo "  Detected type : ${pr_title%%:*}:"
+    echo "  Example       : scripts/open-release-pr.sh --title '${pr_title%%:*}: your description here'"
+    echo ""
+    exit 1
 fi
 
 echo "source branch : $current_branch"
