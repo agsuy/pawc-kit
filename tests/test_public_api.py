@@ -101,8 +101,9 @@ def test_all_exported_symbols_are_importable() -> None:
         assert hasattr(pawc_kit, symbol), f"{symbol!r} in __all__ but not accessible as attribute"
 
 
-def test_root_exports_at_least_46_symbols() -> None:
-    assert len(pawc_kit.__all__) >= 46
+def test_root_exports_exact_symbol_count() -> None:
+    """Tight bound so accidental removals from __all__ fail the test."""
+    assert len(pawc_kit.__all__) == 87
 
 
 # ---------------------------------------------------------------------------
