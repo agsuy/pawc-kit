@@ -73,3 +73,7 @@ Use `scripts/commit.sh "<type>(<scope>): <subject>"` for conventional commits fr
 If you want git to reject invalid commit messages automatically, run `scripts/install-git-hooks.sh` once per clone.
 
 Do not ignore or disable lint rules without a written justification and explicit human approval.
+
+## License
+
+By submitting a pull request, you agree that your contributions are licensed under the [Apache License 2.0](LICENSE), the same license that covers this project.
