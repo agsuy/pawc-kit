@@ -70,7 +70,10 @@ That sequence is wrapped by `scripts/verify.sh`.
 
 Use `scripts/commit.sh "<type>(<scope>): <subject>"` for conventional commits from staged changes.
 
-If you want git to reject invalid commit messages automatically, run `scripts/install-git-hooks.sh` once per clone.
+Run `scripts/install-git-hooks.sh` once per clone to enable local git hooks:
+
+- **pre-commit**: aborts the commit if `scripts/lint-check.sh` fails; run `scripts/lint.sh` to auto-fix, then re-stage and retry.
+- **commit-msg**: rejects commit messages that do not follow Conventional Commits.
 
 Do not ignore or disable lint rules without a written justification and explicit human approval.
 

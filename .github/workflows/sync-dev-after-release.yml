@@ -1,0 +1,40 @@
+name: Sync dev after release
+
+# Merges main back into dev after PSR lands a release commit.
+# Keeps dev up to date with version bumps, changelog, and uv.lock
+# so the next dev -> main PR has no PSR-owned file conflicts.
+#
+# .gitattributes marks PSR-owned files with merge=ours so they
+# auto-resolve in favour of dev when the merge runs.
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  sync-dev:
+    # Only run for PSR release commits (message starts with "chore(release):")
+    if: startsWith(github.event.head_commit.message, 'chore(release):')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: dev
+
+      - name: Configure git
+        run: |
+          git config user.name "agsuy"
+          git config user.email "37564412+agsuy@users.noreply.github.com"
+          git config merge.ours.driver true
+
+      - name: Merge main into dev
+        run: |
+          git merge origin/main --no-edit
+
+      - name: Push
+        run: git push origin dev

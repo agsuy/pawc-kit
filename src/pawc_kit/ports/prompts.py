@@ -12,8 +12,8 @@ if TYPE_CHECKING:
         EfficiencyConfig,
         RoleConfig,
     )
+    from pawc_kit.contracts.execution import ExecutionRequest, ReviewRequest
     from pawc_kit.ports.compressor import ContextCompressor
-    from pawc_kit.workflow.roles import ExecutionContext, ReviewContext
 
 
 @runtime_checkable
@@ -30,7 +30,7 @@ class PromptAssembler(Protocol):
 
     def executor_prompts(
         self,
-        ctx: ExecutionContext,
+        ctx: ExecutionRequest,
         role_config: RoleConfig | None = None,
         *,
         efficiency: EfficiencyConfig | None = None,
@@ -42,7 +42,7 @@ class PromptAssembler(Protocol):
 
     def reviewer_prompts(
         self,
-        ctx: ReviewContext,
+        ctx: ReviewRequest,
         role_config: RoleConfig | None = None,
         *,
         quality_gates: dict | None = None,

@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from pawc_kit.context import ContextPack
 from pawc_kit.contracts.artifacts import HandoffContext, KeyArtifactRef
 from pawc_kit.contracts.config import ContextInjectionConfig
-from pawc_kit.contracts.context import ContextMetadata
+from pawc_kit.contracts.execution import ContextPayload
 from pawc_kit.llm.compressor import MarkdownCompressor, PassthroughCompressor
 from pawc_kit.llm.prompts import DefaultPromptAssembler, discovery_section, request_section
 from pawc_kit.ports.compressor import ContextCompressor
@@ -19,11 +16,10 @@ def _pack(
     *,
     request_files: dict[str, str] | None = None,
     discovery_handoff: HandoffContext | None = None,
-    children: list[ContextPack] | None = None,
-) -> ContextPack:
-    return ContextPack(
-        path=Path("."),
-        metadata=ContextMetadata(context_id=context_id, created_at="2026-01-01T00:00:00Z"),
+    children: list[ContextPayload] | None = None,
+) -> ContextPayload:
+    return ContextPayload(
+        context_id=context_id,
         request_files=request_files or {},
         discovery_handoff=discovery_handoff,
         children=children or [],
@@ -36,7 +32,7 @@ def _pack(
 
 
 def test_request_section_empty_pack_returns_empty() -> None:
-    ctx = make_exec_ctx(context=ContextPack.empty())
+    ctx = make_exec_ctx(context=ContextPayload.empty())
     assert request_section(ctx) == ""
 
 
@@ -115,7 +111,7 @@ def test_request_section_with_passthrough_compressor_returns_content_unchanged()
 
 
 def test_discovery_section_no_handoff_returns_empty() -> None:
-    ctx = make_exec_ctx(context=ContextPack.empty())
+    ctx = make_exec_ctx(context=ContextPayload.empty())
     assert discovery_section(ctx) == ""
 
 
@@ -197,7 +193,7 @@ def test_reviewer_prompts_includes_request_section() -> None:
 
 
 def test_executor_prompts_empty_pack_no_context_sections() -> None:
-    ctx = make_exec_ctx(context=ContextPack.empty())
+    ctx = make_exec_ctx(context=ContextPayload.empty())
     _, user = DefaultPromptAssembler().executor_prompts(ctx)
     assert "## Request Context" not in user
     assert "## Discovery Background" not in user

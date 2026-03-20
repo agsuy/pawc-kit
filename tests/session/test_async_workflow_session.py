@@ -12,7 +12,8 @@ from pawc_kit.async_session import AsyncWorkflowSession
 from pawc_kit.contracts import ConfigurationError, RootConfig, SkillConfig
 from pawc_kit.contracts.artifacts import HandoffContext
 from pawc_kit.contracts.config import PhaseDefConfig, WorkflowConfig
-from pawc_kit.workflow.roles import ExecutionContext, ExecutionResult
+from pawc_kit.contracts.execution import ExecutionRequest
+from pawc_kit.workflow.roles import ExecutionResult
 
 
 def _config(*, phases: list[PhaseDefConfig] | None = None, **workflow_kwargs) -> RootConfig:
@@ -40,9 +41,9 @@ def _simple_phases() -> list[PhaseDefConfig]:
 class MinimalAsyncWorker:
     """Async executor that returns a fixed result."""
 
-    async def execute(self, ctx: ExecutionContext) -> ExecutionResult:
+    async def execute(self, req: ExecutionRequest) -> ExecutionResult:
         return ExecutionResult(
-            role_id=ctx.phase.role_id,
+            role_id=req.phase.role_id,
             ended_at=utc_now(),
             confidence_score=90,
             summary="done",

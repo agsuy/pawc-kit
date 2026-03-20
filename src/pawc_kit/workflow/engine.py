@@ -21,19 +21,20 @@ from pawc_kit.contracts.events import (
     RunStarted,
     WorkflowEvent,
 )
+from pawc_kit.contracts.execution import ContextPayload, ExecutionRequest, ReviewRequest
 from pawc_kit.contracts.state import IterationEntry, ReviewEntry, SessionState
 from pawc_kit.ports.artifacts import ArtifactStore, AsyncArtifactStore
 from pawc_kit.ports.clock import AsyncClock, Clock
+from pawc_kit.ports.controller import RunController, RunSignal
+from pawc_kit.ports.invoker import AsyncRoleInvoker, RoleInvoker
 from pawc_kit.ports.observers import AsyncWorkflowObserver, WorkflowObserver
 from pawc_kit.ports.state import AsyncStateStore, SessionMetadata, StateStore, StoredSession
 from pawc_kit.workflow.graph import PhaseDefinition, PhaseGraph
 from pawc_kit.workflow.roles import (
     AsyncExecutor,
     AsyncReviewer,
-    ExecutionContext,
     ExecutionResult,
     Executor,
-    ReviewContext,
     Reviewer,
     WorkflowHistoryView,
 )
@@ -151,6 +152,21 @@ def _scope_context_pack(pack: ContextPack, phase: PhaseDefinition) -> ContextPac
     return replace(pack, children=packs[1:])
 
 
+def _context_payload_from_pack(pack: ContextPack) -> ContextPayload:
+    """Recursively convert a ``ContextPack`` to a serializable ``ContextPayload``.
+
+    The pack must already be scoped (via ``_scope_context_pack``) before this
+    conversion so that ``context_sources`` filtering happens on the ``ContextPack``
+    graph where ``child.metadata.context_id`` is available.
+    """
+    return ContextPayload(
+        context_id=pack.metadata.context_id if pack.metadata else "",
+        request_files=dict(pack.request_files),
+        discovery_handoff=pack.discovery_handoff,
+        children=[_context_payload_from_pack(child) for child in pack.children],
+    )
+
+
 def _phase_role_id(graph: PhaseGraph, phase_id: str | None) -> str | None:
     if phase_id is None:
         return None
@@ -191,6 +207,24 @@ def _validate_role_output(
         )
 
 
+class _StopRequested(Exception):
+    """Internal sentinel raised to break out of the run loop on pause.
+
+    Never propagated to callers — caught by the inner try/except in ``run()``
+    before the outer ``except Exception`` handler that emits ``RunFailed``.
+    State is left ``in_progress`` (resumable) when this is raised.
+    """
+
+
+class _CancelRequested(_StopRequested):
+    """Internal sentinel raised to break out of the run loop on cancel.
+
+    Subclass of ``_StopRequested`` so a single ``except _StopRequested``
+    in the sync engine catches both.  The async engine catches it separately
+    first to call ``await _finalize`` before the generic stop handling.
+    """
+
+
 class WorkflowEngine:
     """Sync workflow engine using in-memory state with step-level durable flushes."""
 
@@ -207,6 +241,8 @@ class WorkflowEngine:
         max_feedback_rounds: int = 3,
         confidence_floor: int | None = None,
         metadata: Mapping[str, Any] | None = None,
+        invoker: RoleInvoker | None = None,
+        controller: RunController | None = None,
     ) -> None:
         self._graph = graph
         self._state_store = state_store
@@ -218,10 +254,29 @@ class WorkflowEngine:
         self._max_feedback_rounds = max_feedback_rounds
         self._confidence_floor = confidence_floor
         self._metadata = metadata
-        self._role_bindings: dict[str, object] = {}
+        self._explicit_invoker = invoker is not None
+        if invoker is not None:
+            self._invoker: RoleInvoker = invoker
+        else:
+            from pawc_kit.adapters.local_invoker import LocalRoleInvoker
+
+            self._invoker = LocalRoleInvoker()
+        if controller is not None:
+            self._controller: RunController = controller
+        else:
+            from pawc_kit.adapters.always_continue import AlwaysContinue
+
+            self._controller = AlwaysContinue()
 
     def register_role(self, role_id: str, role: Executor | Reviewer) -> None:
-        self._role_bindings[role_id] = role
+        from pawc_kit.adapters.local_invoker import LocalRoleInvoker
+
+        if self._explicit_invoker:
+            raise ConfigurationError(
+                "register_role() is not supported when an explicit invoker is provided"
+            )
+        assert isinstance(self._invoker, LocalRoleInvoker)
+        self._invoker.register_role(role_id, role)
 
     def run(
         self,
@@ -249,7 +304,7 @@ class WorkflowEngine:
         try:
             if runtime.state.status in ("completed", "abandoned"):
                 return runtime.state
-            self._validate_role_bindings()
+            self._invoker.validate(self._graph)
             self._graph.validate_against_pack(pack)
 
             if runtime.state.status == "initialized":
@@ -265,13 +320,17 @@ class WorkflowEngine:
                         occurred_at=self._clock.now(),
                     )
                 )
+                self._metadata = runtime.state.run_metadata
 
-            while runtime.state.status == "in_progress":
-                phase = self._graph.get(runtime.state.current_phase)
-                if phase.kind == "executor":
-                    self._run_executor(runtime, phase)
-                else:
-                    self._run_review(runtime, phase)
+            try:
+                while runtime.state.status == "in_progress":
+                    phase = self._graph.get(runtime.state.current_phase)
+                    if phase.kind == "executor":
+                        self._run_executor(runtime, phase)
+                    else:
+                        self._run_review(runtime, phase)
+            except _StopRequested:
+                pass
 
             return runtime.state
         except Exception as exc:
@@ -288,23 +347,6 @@ class WorkflowEngine:
             )
             raise
 
-    def _validate_role_bindings(self) -> None:
-        for phase_id in self._graph.phase_ids:
-            phase = self._graph.get(phase_id)
-            role = self._role_bindings.get(phase.role_id)
-            if role is None:
-                raise ConfigurationError(
-                    f"Phase {phase.phase_id!r} references unregistered role_id {phase.role_id!r}"
-                )
-            if phase.kind == "executor" and not isinstance(role, Executor):
-                raise ConfigurationError(
-                    f"role_id {phase.role_id!r} is bound to a non-executor implementation"
-                )
-            if phase.kind == "review" and not isinstance(role, Reviewer):
-                raise ConfigurationError(
-                    f"role_id {phase.role_id!r} is bound to a non-reviewer implementation"
-                )
-
     def _load_or_initialize(self, metadata: SessionMetadata) -> StoredSession:
         try:
             return self._state_store.load(metadata.session_id)
@@ -318,8 +360,29 @@ class WorkflowEngine:
         if self._observer is not None:
             self._observer.on_event(event)
 
+    def _check_signal(self, runtime: _SyncRuntime) -> None:
+        """Check the run controller and raise if the run should stop.
+
+        Called at every commit boundary (top of executor ``while True`` and
+        after ``ReviewCommitted``).  On ``CANCEL`` the run is finalized as
+        ``abandoned`` before raising so the state is terminal.  On ``PAUSE``
+        the state is left ``in_progress`` (resumable).
+        """
+        signal = self._controller.check()
+        if signal is RunSignal.CONTINUE:
+            return
+        if signal is RunSignal.CANCEL:
+            self._finalize(runtime, completed=False)
+            raise _CancelRequested()
+        raise _StopRequested()
+
     def _start_run(self, runtime: _SyncRuntime) -> None:
-        state = runtime.state.model_copy(update={"status": "in_progress"})
+        state = runtime.state.model_copy(
+            update={
+                "status": "in_progress",
+                "run_metadata": (dict(self._metadata) if self._metadata is not None else None),
+            }
+        )
         self._save(runtime, state)
         self._emit(
             RunStarted(
@@ -405,45 +468,38 @@ class WorkflowEngine:
             previous_decision=previous_decision,
         )
 
-    def _build_execution_context(
+    def _build_execution_request(
         self, runtime: _SyncRuntime, phase: PhaseDefinition
-    ) -> ExecutionContext:
+    ) -> ExecutionRequest:
         scoped = _scope_context_pack(runtime.context_pack, phase)
-        return ExecutionContext(
+        return ExecutionRequest(
             session=_clone_state(runtime.state),
             phase=phase,
             history=self._history_for_phase(runtime, phase),
-            artifacts=self._artifact_store,
-            context=scoped,
+            context=_context_payload_from_pack(scoped),
             metadata=self._metadata,
         )
 
-    def _build_review_context(self, runtime: _SyncRuntime, phase: PhaseDefinition) -> ReviewContext:
+    def _build_review_request(self, runtime: _SyncRuntime, phase: PhaseDefinition) -> ReviewRequest:
         scoped = _scope_context_pack(runtime.context_pack, phase)
-        return ReviewContext(
+        return ReviewRequest(
             session=_clone_state(runtime.state),
             phase=phase,
             history=self._history_for_phase(runtime, phase),
-            artifacts=self._artifact_store,
-            context=scoped,
+            context=_context_payload_from_pack(scoped),
             metadata=self._metadata,
             approval_targets=self._graph.on_approve_targets(phase.phase_id),
             request_change_targets=self._graph.can_request_changes_from_targets(phase.phase_id),
         )
 
     def _run_executor(self, runtime: _SyncRuntime, phase: PhaseDefinition) -> None:
-        role = self._role_bindings.get(phase.role_id)
-        if not isinstance(role, Executor):
-            raise TransitionError(
-                f"No Executor registered for role_id {phase.role_id!r} in phase {phase.phase_id!r}"
-            )
-
         iteration_count = _count_iterations(runtime.state, phase.phase_id)
         last_result: ExecutionResult | None = None
 
         while True:
+            self._check_signal(runtime)
             started_at = self._clock.now()
-            result = role.execute(self._build_execution_context(runtime, phase))
+            result = self._invoker.invoke_executor(self._build_execution_request(runtime, phase))
             last_result = result
             _validate_role_output(
                 phase,
@@ -515,14 +571,8 @@ class WorkflowEngine:
         self._transition_to(runtime, phase.phase_id, next_phase)
 
     def _run_review(self, runtime: _SyncRuntime, phase: PhaseDefinition) -> None:
-        role = self._role_bindings.get(phase.role_id)
-        if not isinstance(role, Reviewer):
-            raise TransitionError(
-                f"No Reviewer registered for role_id {phase.role_id!r} in phase {phase.phase_id!r}"
-            )
-
         started_at = self._clock.now()
-        result = role.review(self._build_review_context(runtime, phase))
+        result = self._invoker.invoke_reviewer(self._build_review_request(runtime, phase))
         _validate_role_output(
             phase,
             role_id=result.role_id,
@@ -606,6 +656,7 @@ class WorkflowEngine:
                 findings_ref=decision_ref.ref,
             )
         )
+        self._check_signal(runtime)
 
         if payload.decision == "REQUEST_CHANGES":
             if runtime.state.feedback_loops >= self._max_feedback_rounds:
@@ -634,6 +685,8 @@ class AsyncWorkflowEngine:
         max_feedback_rounds: int = 3,
         confidence_floor: int | None = None,
         metadata: Mapping[str, Any] | None = None,
+        invoker: AsyncRoleInvoker | None = None,
+        controller: RunController | None = None,
     ) -> None:
         self._graph = graph
         self._state_store = state_store
@@ -645,10 +698,29 @@ class AsyncWorkflowEngine:
         self._max_feedback_rounds = max_feedback_rounds
         self._confidence_floor = confidence_floor
         self._metadata = metadata
-        self._role_bindings: dict[str, object] = {}
+        self._explicit_invoker = invoker is not None
+        if invoker is not None:
+            self._invoker: AsyncRoleInvoker = invoker
+        else:
+            from pawc_kit.adapters.local_invoker import AsyncLocalRoleInvoker
+
+            self._invoker = AsyncLocalRoleInvoker()
+        if controller is not None:
+            self._controller: RunController = controller
+        else:
+            from pawc_kit.adapters.always_continue import AlwaysContinue
+
+            self._controller = AlwaysContinue()
 
     def register_role(self, role_id: str, role: AsyncExecutor | AsyncReviewer) -> None:
-        self._role_bindings[role_id] = role
+        from pawc_kit.adapters.local_invoker import AsyncLocalRoleInvoker
+
+        if self._explicit_invoker:
+            raise ConfigurationError(
+                "register_role() is not supported when an explicit invoker is provided"
+            )
+        assert isinstance(self._invoker, AsyncLocalRoleInvoker)
+        self._invoker.register_role(role_id, role)
 
     async def run(
         self,
@@ -676,7 +748,7 @@ class AsyncWorkflowEngine:
         try:
             if runtime.state.status in ("completed", "abandoned"):
                 return runtime.state
-            self._validate_role_bindings()
+            self._invoker.validate(self._graph)
             self._graph.validate_against_pack(pack)
 
             if runtime.state.status == "initialized":
@@ -692,13 +764,19 @@ class AsyncWorkflowEngine:
                         occurred_at=await self._clock.now(),
                     )
                 )
+                self._metadata = runtime.state.run_metadata
 
-            while runtime.state.status == "in_progress":
-                phase = self._graph.get(runtime.state.current_phase)
-                if phase.kind == "executor":
-                    await self._run_executor(runtime, phase)
-                else:
-                    await self._run_review(runtime, phase)
+            try:
+                while runtime.state.status == "in_progress":
+                    phase = self._graph.get(runtime.state.current_phase)
+                    if phase.kind == "executor":
+                        await self._run_executor(runtime, phase)
+                    else:
+                        await self._run_review(runtime, phase)
+            except _CancelRequested:
+                await self._finalize(runtime, completed=False)
+            except _StopRequested:
+                pass
 
             return runtime.state
         except Exception as exc:
@@ -715,23 +793,6 @@ class AsyncWorkflowEngine:
             )
             raise
 
-    def _validate_role_bindings(self) -> None:
-        for phase_id in self._graph.phase_ids:
-            phase = self._graph.get(phase_id)
-            role = self._role_bindings.get(phase.role_id)
-            if role is None:
-                raise ConfigurationError(
-                    f"Phase {phase.phase_id!r} references unregistered role_id {phase.role_id!r}"
-                )
-            if phase.kind == "executor" and not isinstance(role, AsyncExecutor):
-                raise ConfigurationError(
-                    f"role_id {phase.role_id!r} is bound to a non-executor implementation"
-                )
-            if phase.kind == "review" and not isinstance(role, AsyncReviewer):
-                raise ConfigurationError(
-                    f"role_id {phase.role_id!r} is bound to a non-reviewer implementation"
-                )
-
     async def _load_or_initialize(self, metadata: SessionMetadata) -> StoredSession:
         try:
             return await self._state_store.load(metadata.session_id)
@@ -747,8 +808,28 @@ class AsyncWorkflowEngine:
         if self._observer is not None:
             await self._observer.on_event(event)
 
+    def _check_signal(self, runtime: _AsyncRuntime) -> None:
+        """Check the run controller and raise ``_StopRequested`` if needed.
+
+        Intentionally sync — ``RunController.check()`` is a lightweight flag
+        read.  Called at every commit boundary inside the async engine.
+        On ``CANCEL`` raises ``_CancelRequested`` so the async inner handler
+        can call ``await _finalize`` before silently absorbing the stop.
+        """
+        signal = self._controller.check()
+        if signal is RunSignal.CONTINUE:
+            return
+        if signal is RunSignal.CANCEL:
+            raise _CancelRequested()
+        raise _StopRequested()
+
     async def _start_run(self, runtime: _AsyncRuntime) -> None:
-        state = runtime.state.model_copy(update={"status": "in_progress"})
+        state = runtime.state.model_copy(
+            update={
+                "status": "in_progress",
+                "run_metadata": (dict(self._metadata) if self._metadata is not None else None),
+            }
+        )
         await self._save(runtime, state)
         now = await self._clock.now()
         await self._emit(
@@ -837,48 +918,42 @@ class AsyncWorkflowEngine:
             previous_decision=previous_decision,
         )
 
-    async def _build_execution_context(
+    async def _build_execution_request(
         self, runtime: _AsyncRuntime, phase: PhaseDefinition
-    ) -> ExecutionContext:
+    ) -> ExecutionRequest:
         scoped = _scope_context_pack(runtime.context_pack, phase)
-        return ExecutionContext(
+        return ExecutionRequest(
             session=_clone_state(runtime.state),
             phase=phase,
             history=await self._history_for_phase(runtime, phase),
-            artifacts=self._artifact_store,
-            context=scoped,
+            context=_context_payload_from_pack(scoped),
             metadata=self._metadata,
         )
 
-    async def _build_review_context(
+    async def _build_review_request(
         self, runtime: _AsyncRuntime, phase: PhaseDefinition
-    ) -> ReviewContext:
+    ) -> ReviewRequest:
         scoped = _scope_context_pack(runtime.context_pack, phase)
-        return ReviewContext(
+        return ReviewRequest(
             session=_clone_state(runtime.state),
             phase=phase,
             history=await self._history_for_phase(runtime, phase),
-            artifacts=self._artifact_store,
-            context=scoped,
+            context=_context_payload_from_pack(scoped),
             metadata=self._metadata,
             approval_targets=self._graph.on_approve_targets(phase.phase_id),
             request_change_targets=self._graph.can_request_changes_from_targets(phase.phase_id),
         )
 
     async def _run_executor(self, runtime: _AsyncRuntime, phase: PhaseDefinition) -> None:
-        role = self._role_bindings.get(phase.role_id)
-        if not isinstance(role, AsyncExecutor):
-            raise TransitionError(
-                f"No AsyncExecutor registered for role_id {phase.role_id!r} "
-                f"in phase {phase.phase_id!r}"
-            )
-
         iteration_count = _count_iterations(runtime.state, phase.phase_id)
         last_result: ExecutionResult | None = None
 
         while True:
+            self._check_signal(runtime)
             started_at = await self._clock.now()
-            result = await role.execute(await self._build_execution_context(runtime, phase))
+            result = await self._invoker.invoke_executor(
+                await self._build_execution_request(runtime, phase)
+            )
             last_result = result
             _validate_role_output(
                 phase,
@@ -950,15 +1025,10 @@ class AsyncWorkflowEngine:
         await self._transition_to(runtime, phase.phase_id, next_phase)
 
     async def _run_review(self, runtime: _AsyncRuntime, phase: PhaseDefinition) -> None:
-        role = self._role_bindings.get(phase.role_id)
-        if not isinstance(role, AsyncReviewer):
-            raise TransitionError(
-                f"No AsyncReviewer registered for role_id {phase.role_id!r} "
-                f"in phase {phase.phase_id!r}"
-            )
-
         started_at = await self._clock.now()
-        result = await role.review(await self._build_review_context(runtime, phase))
+        result = await self._invoker.invoke_reviewer(
+            await self._build_review_request(runtime, phase)
+        )
         _validate_role_output(
             phase,
             role_id=result.role_id,
@@ -1042,6 +1112,7 @@ class AsyncWorkflowEngine:
                 findings_ref=decision_ref.ref,
             )
         )
+        self._check_signal(runtime)
 
         if payload.decision == "REQUEST_CHANGES":
             if runtime.state.feedback_loops >= self._max_feedback_rounds:

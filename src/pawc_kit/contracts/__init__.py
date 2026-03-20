@@ -49,6 +49,7 @@ from pawc_kit.contracts.events import (
     RunStarted,
     WorkflowEvent,
 )
+from pawc_kit.contracts.execution import ContextPayload, ExecutionRequest, ReviewRequest
 from pawc_kit.contracts.state import (
     ArtifactRef,
     DataCommandEntry,
@@ -62,6 +63,9 @@ __all__ = [
     "ArtifactRef",
     "CompositionEntry",
     "ChunkPolicyConfig",
+    "ContextPayload",
+    "ExecutionRequest",
+    "ReviewRequest",
     "CompressionConfig",
     "ContextConfig",
     "ContextInjectionConfig",

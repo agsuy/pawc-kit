@@ -1,21 +1,14 @@
-"""LLM test fixtures: MockBackend factory, NullArtifactReader, context builders."""
+"""LLM test fixtures: MockBackend factory and context builders."""
 
 from __future__ import annotations
 
 import pytest
 
-from pawc_kit.context import ContextPack
+from pawc_kit.contracts.execution import ContextPayload, ExecutionRequest, ReviewRequest
 from pawc_kit.contracts.state import SessionState
 from pawc_kit.llm.mock import MockBackend
 from pawc_kit.workflow.graph import PhaseDefinition
-from pawc_kit.workflow.roles import ExecutionContext, ReviewContext, WorkflowHistoryView
-
-
-class NullArtifactReader:
-    """ArtifactReader that returns empty bytes for any ref."""
-
-    def load_artifact(self, ref: object) -> bytes:
-        return b""
+from pawc_kit.workflow.roles import WorkflowHistoryView
 
 
 def make_session() -> SessionState:
@@ -32,9 +25,9 @@ def make_session() -> SessionState:
 def make_exec_ctx(
     *,
     role_overrides: dict | None = None,
-    context: ContextPack | None = None,
-) -> ExecutionContext:
-    return ExecutionContext(
+    context: ContextPayload | None = None,
+) -> ExecutionRequest:
+    return ExecutionRequest(
         session=make_session(),
         phase=PhaseDefinition(
             phase_id="work",
@@ -43,17 +36,16 @@ def make_exec_ctx(
             role_overrides=role_overrides,
         ),
         history=WorkflowHistoryView(iterations=[], reviews=[]),
-        artifacts=NullArtifactReader(),
-        context=context if context is not None else ContextPack.empty(),
+        context=context if context is not None else ContextPayload.empty(),
     )
 
 
 def make_review_ctx(
     *,
     role_overrides: dict | None = None,
-    context: ContextPack | None = None,
-) -> ReviewContext:
-    return ReviewContext(
+    context: ContextPayload | None = None,
+) -> ReviewRequest:
+    return ReviewRequest(
         session=make_session().model_copy(update={"current_phase": "review"}),
         phase=PhaseDefinition(
             phase_id="review",
@@ -62,8 +54,7 @@ def make_review_ctx(
             role_overrides=role_overrides,
         ),
         history=WorkflowHistoryView(iterations=[], reviews=[]),
-        artifacts=NullArtifactReader(),
-        context=context if context is not None else ContextPack.empty(),
+        context=context if context is not None else ContextPayload.empty(),
         request_change_targets=["work"],
         approval_targets=[],
     )
@@ -75,15 +66,10 @@ def mock_backend() -> MockBackend:
 
 
 @pytest.fixture()
-def null_reader() -> NullArtifactReader:
-    return NullArtifactReader()
-
-
-@pytest.fixture()
-def exec_ctx() -> ExecutionContext:
+def exec_ctx() -> ExecutionRequest:
     return make_exec_ctx()
 
 
 @pytest.fixture()
-def review_ctx() -> ReviewContext:
+def review_ctx() -> ReviewRequest:
     return make_review_ctx()

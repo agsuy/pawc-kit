@@ -2,12 +2,17 @@
 
 import logging
 
+from pawc_kit.adapters.always_continue import AlwaysContinue
+from pawc_kit.adapters.fs.runtime import AsyncFsRuntimeBackend, FsRuntimeBackend
+from pawc_kit.adapters.local_invoker import AsyncLocalRoleInvoker, LocalRoleInvoker
 from pawc_kit.async_session import AsyncWorkflowSession
 from pawc_kit.config import load_role_config, load_root_config, load_yaml_config
 from pawc_kit.context import ContextPack, accessible_packs, load_context_pack
 from pawc_kit.contracts import (
     ArtifactRef,
+    ContextPayload,
     DecisionPayload,
+    ExecutionRequest,
     FindingEntry,
     HandoffArtifact,
     HandoffArtifactMetadata,
@@ -16,6 +21,7 @@ from pawc_kit.contracts import (
     IterationEntry,
     KeyArtifactRef,
     ReviewEntry,
+    ReviewRequest,
     SessionState,
 )
 from pawc_kit.contracts.config import (
@@ -72,11 +78,19 @@ from pawc_kit.ports import (
     ArtifactStore,
     AsyncArtifactStore,
     AsyncClock,
+    AsyncResolvedBackend,
+    AsyncRoleInvoker,
+    AsyncRuntimeBackend,
     AsyncStateStore,
     AsyncWorkflowObserver,
     Clock,
     ContextCompressor,
     PromptAssembler,
+    ResolvedBackend,
+    RoleInvoker,
+    RunController,
+    RunSignal,
+    RuntimeBackend,
     StateStore,
     WorkflowObserver,
 )
@@ -131,8 +145,12 @@ __all__ = [
     "LayoutManager",
     # Context
     "ContextPack",
+    "ContextPayload",
     "accessible_packs",
     "load_context_pack",
+    # Execution DTOs
+    "ExecutionRequest",
+    "ReviewRequest",
     # Validators
     "check_quality_gates",
     "validate_composition",
@@ -177,13 +195,29 @@ __all__ = [
     "ArtifactStore",
     "AsyncArtifactStore",
     "AsyncClock",
+    "AsyncResolvedBackend",
+    "AsyncRoleInvoker",
+    "AsyncRuntimeBackend",
     "AsyncStateStore",
     "AsyncWorkflowObserver",
     "Clock",
     "ContextCompressor",
     "PromptAssembler",
+    "ResolvedBackend",
+    "RoleInvoker",
+    "RuntimeBackend",
     "StateStore",
     "WorkflowObserver",
+    # Runtime backend adapters
+    "AsyncFsRuntimeBackend",
+    "FsRuntimeBackend",
+    # Role invoker adapters
+    "AsyncLocalRoleInvoker",
+    "LocalRoleInvoker",
+    # Run controller
+    "AlwaysContinue",
+    "RunController",
+    "RunSignal",
     # LLM backend
     "BackendCapabilities",
     # LLM compressors

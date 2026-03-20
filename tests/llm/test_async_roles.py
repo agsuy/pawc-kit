@@ -45,12 +45,11 @@ def _rule(target: str, *, gte: int | None = None, lt: int | None = None) -> Rout
 
 
 def _make_exec_ctx_with_routing(rules: list[RoutingRuleConfig]):
-    from pawc_kit.context import ContextPack
+    from pawc_kit.contracts.execution import ContextPayload, ExecutionRequest
     from pawc_kit.contracts.state import SessionState
-    from pawc_kit.workflow.roles import ExecutionContext, WorkflowHistoryView
-    from tests.llm.conftest import NullArtifactReader
+    from pawc_kit.workflow.roles import WorkflowHistoryView
 
-    return ExecutionContext(
+    return ExecutionRequest(
         session=SessionState(
             session_id="s1",
             skill_name="skill",
@@ -67,18 +66,16 @@ def _make_exec_ctx_with_routing(rules: list[RoutingRuleConfig]):
             routing=rules,
         ),
         history=WorkflowHistoryView(iterations=[], reviews=[]),
-        artifacts=NullArtifactReader(),
-        context=ContextPack.empty(),
+        context=ContextPayload.empty(),
     )
 
 
 def _make_review_ctx_with_routing(rules: list[RoutingRuleConfig]):
-    from pawc_kit.context import ContextPack
+    from pawc_kit.contracts.execution import ContextPayload, ReviewRequest
     from pawc_kit.contracts.state import SessionState
-    from pawc_kit.workflow.roles import ReviewContext, WorkflowHistoryView
-    from tests.llm.conftest import NullArtifactReader
+    from pawc_kit.workflow.roles import WorkflowHistoryView
 
-    return ReviewContext(
+    return ReviewRequest(
         session=SessionState(
             session_id="s1",
             skill_name="skill",
@@ -96,8 +93,7 @@ def _make_review_ctx_with_routing(rules: list[RoutingRuleConfig]):
             routing=rules,
         ),
         history=WorkflowHistoryView(iterations=[], reviews=[]),
-        artifacts=NullArtifactReader(),
-        context=ContextPack.empty(),
+        context=ContextPayload.empty(),
         approval_targets=["next-a", "next-b"],
         request_change_targets=["work"],
     )

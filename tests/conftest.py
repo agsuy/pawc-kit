@@ -9,11 +9,10 @@ from typing import Any
 import pytest
 
 from pawc_kit._time import utc_now
+from pawc_kit.contracts.execution import ExecutionRequest, ReviewRequest
 from pawc_kit.workflow.graph import PhaseDefinition, PhaseGraph
 from pawc_kit.workflow.roles import (
-    ExecutionContext,
     ExecutionResult,
-    ReviewContext,
     ReviewDecision,
     ReviewResult,
 )
@@ -49,11 +48,11 @@ class MinimalWorker:
         self.chosen_next = chosen_next
         self._with_handoff = with_handoff
 
-    def execute(self, ctx: ExecutionContext) -> ExecutionResult:
+    def execute(self, req: ExecutionRequest) -> ExecutionResult:
         from pawc_kit.contracts.artifacts import HandoffContext
 
         return ExecutionResult(
-            role_id=ctx.phase.role_id,
+            role_id=req.phase.role_id,
             ended_at=utc_now(),
             confidence_score=self.confidence,
             summary="done",
@@ -77,11 +76,11 @@ class MinimalReviewer:
         self._target_phase = target_phase
         self._chosen_next = chosen_next
 
-    def review(self, ctx: ReviewContext) -> ReviewResult:
+    def review(self, req: ReviewRequest) -> ReviewResult:
         decision = self._decisions[self._call_count % len(self._decisions)]
         self._call_count += 1
         return ReviewResult(
-            role_id=ctx.phase.role_id,
+            role_id=req.phase.role_id,
             ended_at=utc_now(),
             decision=ReviewDecision(
                 decision=decision,  # type: ignore[arg-type]

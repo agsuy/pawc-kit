@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+
+if ! "$repo_root/scripts/lint-check.sh" > /dev/null 2>&1; then
+    echo ""
+    echo "pre-commit: formatting or lint check failed."
+    echo "Run 'scripts/lint.sh' to auto-fix, then re-stage and commit."
+    echo ""
+    exit 1
+fi

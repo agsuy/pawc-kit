@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Mapping, Protocol, runtime_checkable
 
 from pawc_kit.contracts.artifacts import DecisionPayload, FindingEntry, HandoffContext
+from pawc_kit.contracts.execution import ExecutionRequest, ReviewRequest
 from pawc_kit.contracts.state import ArtifactRef, IterationEntry, ReviewEntry, SessionState
 from pawc_kit.ports.artifacts import ArtifactReader, AsyncArtifactReader
 from pawc_kit.workflow.graph import PhaseDefinition
@@ -25,7 +26,13 @@ class WorkflowHistoryView:
 
 @dataclass(frozen=True)
 class ExecutionContext:
-    """Context passed to executor roles."""
+    """Context passed to executor roles.
+
+    .. deprecated::
+        Use :class:`~pawc_kit.contracts.execution.ExecutionRequest` instead.
+        ``ExecutionContext`` is retained for import compatibility but is no longer
+        used by the workflow engine or the built-in role protocols.
+    """
 
     session: SessionState
     phase: PhaseDefinition
@@ -37,7 +44,13 @@ class ExecutionContext:
 
 @dataclass(frozen=True)
 class ReviewContext:
-    """Context passed to reviewer roles."""
+    """Context passed to reviewer roles.
+
+    .. deprecated::
+        Use :class:`~pawc_kit.contracts.execution.ReviewRequest` instead.
+        ``ReviewContext`` is retained for import compatibility but is no longer
+        used by the workflow engine or the built-in role protocols.
+    """
 
     session: SessionState
     phase: PhaseDefinition
@@ -95,38 +108,40 @@ class ReviewResult:
 class Executor(Protocol):
     """Sync executor role."""
 
-    def execute(self, ctx: ExecutionContext) -> ExecutionResult: ...
+    def execute(self, req: ExecutionRequest) -> ExecutionResult: ...
 
 
 @runtime_checkable
 class Reviewer(Protocol):
     """Sync reviewer role."""
 
-    def review(self, ctx: ReviewContext) -> ReviewResult: ...
+    def review(self, req: ReviewRequest) -> ReviewResult: ...
 
 
 @runtime_checkable
 class AsyncExecutor(Protocol):
     """Async executor role."""
 
-    async def execute(self, ctx: ExecutionContext) -> ExecutionResult: ...
+    async def execute(self, req: ExecutionRequest) -> ExecutionResult: ...
 
 
 @runtime_checkable
 class AsyncReviewer(Protocol):
     """Async reviewer role."""
 
-    async def review(self, ctx: ReviewContext) -> ReviewResult: ...
+    async def review(self, req: ReviewRequest) -> ReviewResult: ...
 
 
 __all__ = [
     "AsyncExecutor",
     "AsyncReviewer",
     "ExecutionContext",
+    "ExecutionRequest",
     "ExecutionResult",
     "Executor",
     "ReviewContext",
     "ReviewDecision",
+    "ReviewRequest",
     "ReviewResult",
     "Reviewer",
     "WorkflowHistoryView",
