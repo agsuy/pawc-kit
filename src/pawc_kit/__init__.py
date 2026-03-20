@@ -2,6 +2,7 @@
 
 import logging
 
+from pawc_kit.adapters.always_continue import AlwaysContinue
 from pawc_kit.adapters.fs.runtime import AsyncFsRuntimeBackend, FsRuntimeBackend
 from pawc_kit.adapters.local_invoker import AsyncLocalRoleInvoker, LocalRoleInvoker
 from pawc_kit.async_session import AsyncWorkflowSession
@@ -87,6 +88,8 @@ from pawc_kit.ports import (
     PromptAssembler,
     ResolvedBackend,
     RoleInvoker,
+    RunController,
+    RunSignal,
     RuntimeBackend,
     StateStore,
     WorkflowObserver,
@@ -211,6 +214,10 @@ __all__ = [
     # Role invoker adapters
     "AsyncLocalRoleInvoker",
     "LocalRoleInvoker",
+    # Run controller
+    "AlwaysContinue",
+    "RunController",
+    "RunSignal",
     # LLM backend
     "BackendCapabilities",
     # LLM compressors

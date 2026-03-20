@@ -29,6 +29,7 @@ from pawc_kit.contracts.config import RootConfig
 from pawc_kit.contracts.errors import ConfigurationError
 from pawc_kit.contracts.state import SessionState
 from pawc_kit.ports.clock import Clock
+from pawc_kit.ports.controller import RunController
 from pawc_kit.ports.invoker import RoleInvoker
 from pawc_kit.ports.observers import WorkflowObserver
 from pawc_kit.ports.runtime import RuntimeBackend
@@ -88,6 +89,7 @@ class WorkflowSession:
         state_filename: str | None = None,
         backend: RuntimeBackend | None = None,
         invoker: RoleInvoker | None = None,
+        controller: RunController | None = None,
         observer: WorkflowObserver | None | UnsetType = UNSET,
         clock: Clock | None = None,
         confidence_threshold: int | None = None,
@@ -110,6 +112,7 @@ class WorkflowSession:
             state_filename=state_filename,
             backend=backend,
             invoker=invoker,
+            controller=controller,
             observer=observer,
             clock=clock,
             confidence_threshold=confidence_threshold,
@@ -128,6 +131,7 @@ class WorkflowSession:
         state_filename: str | None = None,
         backend: RuntimeBackend | None = None,
         invoker: RoleInvoker | None = None,
+        controller: RunController | None = None,
         observer: WorkflowObserver | None | UnsetType = UNSET,
         clock: Clock | None = None,
         confidence_threshold: int | None = None,
@@ -187,6 +191,7 @@ class WorkflowSession:
             self._observer = cast(WorkflowObserver | None, observer)
         self._clock = clock
         self._metadata = metadata
+        self._controller = controller
         self._explicit_invoker = invoker is not None
         self._invoker = invoker
         self._role_bindings: dict[str, Executor | Reviewer] = {}
@@ -257,6 +262,7 @@ class WorkflowSession:
             confidence_floor=self._confidence_floor,
             metadata=self._metadata,
             invoker=invoker,
+            controller=self._controller,
         )
 
         return engine.run(

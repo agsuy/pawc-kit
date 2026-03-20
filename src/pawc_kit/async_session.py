@@ -16,6 +16,7 @@ from pawc_kit.contracts.config import RootConfig
 from pawc_kit.contracts.errors import ConfigurationError
 from pawc_kit.contracts.state import SessionState
 from pawc_kit.ports.clock import AsyncClock
+from pawc_kit.ports.controller import RunController
 from pawc_kit.ports.invoker import AsyncRoleInvoker
 from pawc_kit.ports.observers import AsyncWorkflowObserver
 from pawc_kit.ports.runtime import AsyncRuntimeBackend
@@ -54,6 +55,7 @@ class AsyncWorkflowSession:
         state_filename: str | None = None,
         backend: AsyncRuntimeBackend | None = None,
         invoker: AsyncRoleInvoker | None = None,
+        controller: RunController | None = None,
         observer: AsyncWorkflowObserver | None | UnsetType = UNSET,
         clock: AsyncClock | None = None,
         confidence_threshold: int | None = None,
@@ -71,6 +73,7 @@ class AsyncWorkflowSession:
             state_filename=state_filename,
             backend=backend,
             invoker=invoker,
+            controller=controller,
             observer=observer,
             clock=clock,
             confidence_threshold=confidence_threshold,
@@ -89,6 +92,7 @@ class AsyncWorkflowSession:
         state_filename: str | None = None,
         backend: AsyncRuntimeBackend | None = None,
         invoker: AsyncRoleInvoker | None = None,
+        controller: RunController | None = None,
         observer: AsyncWorkflowObserver | None | UnsetType = UNSET,
         clock: AsyncClock | None = None,
         confidence_threshold: int | None = None,
@@ -146,6 +150,7 @@ class AsyncWorkflowSession:
             self._observer = cast(AsyncWorkflowObserver | None, observer)
         self._clock = clock
         self._metadata = metadata
+        self._controller = controller
         self._explicit_invoker = invoker is not None
         self._invoker = invoker
         self._role_bindings: dict[str, AsyncExecutor | AsyncReviewer] = {}
@@ -216,6 +221,7 @@ class AsyncWorkflowSession:
             confidence_floor=self._confidence_floor,
             metadata=self._metadata,
             invoker=async_invoker,
+            controller=self._controller,
         )
 
         return await engine.run(
