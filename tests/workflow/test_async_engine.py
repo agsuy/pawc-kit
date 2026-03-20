@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from conftest import make_simple_graph
-from pawc_kit._util import utc_now
+from pawc_kit._time import utc_now
 from pawc_kit.contracts.artifacts import HandoffContext
 from pawc_kit.contracts.events import (
     IterationCommitted,

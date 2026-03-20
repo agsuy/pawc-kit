@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from pawc_kit._util import SEMVER_PATTERN, validate_no_version_in_id
+from pawc_kit._versioning import SemVerStr, validate_no_version_in_id
 
 
 class ArtifactRef(BaseModel):
@@ -96,7 +96,7 @@ class SessionState(BaseModel):
     session_id: str
     context_id: str | None = None
     skill_name: str
-    skill_version: str = Field(..., pattern=SEMVER_PATTERN.pattern)
+    skill_version: SemVerStr
     started_at: str
     current_phase: str
     phase_iterations: list[IterationEntry] = Field(default_factory=list)

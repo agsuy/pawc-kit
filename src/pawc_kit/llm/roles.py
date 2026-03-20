@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Literal, Mapping
 
 from pydantic import BaseModel, Field
 
-from pawc_kit._util import utc_now
+from pawc_kit._time import utc_now
 from pawc_kit.contracts import (
     ArtifactRef,
     ConfigurationError,

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Mapping
 
-from pawc_kit._util import utc_now
+from pawc_kit._time import utc_now
 from pawc_kit.context import ContextPack, accessible_packs
 from pawc_kit.contracts.artifacts import DecisionPayload
 from pawc_kit.contracts.errors import ConfigurationError, StateNotFoundError, TransitionError

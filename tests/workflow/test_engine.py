@@ -191,7 +191,7 @@ def test_engine_rejects_mixed_kind_binding() -> None:
 def test_engine_rejects_role_id_mismatch() -> None:
     class BadWorker:
         def execute(self, ctx: ExecutionContext) -> ExecutionResult:
-            from pawc_kit._util import utc_now
+            from pawc_kit._time import utc_now
 
             return ExecutionResult(
                 role_id="wrong-id", ended_at=utc_now(), confidence_score=90, summary="x"

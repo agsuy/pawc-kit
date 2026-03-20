@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator
 
-from pawc_kit._util import SEMVER_PATTERN, validate_no_version_in_id
+from pawc_kit._versioning import OptionalSemVerStr, validate_no_version_in_id
 
 
 class CompositionEntry(BaseModel):
@@ -17,7 +17,7 @@ class AgentUsedEntry(BaseModel):
     """Agent that contributed to the context."""
 
     agent_id: str
-    agent_version: str | None = Field(None, pattern=SEMVER_PATTERN.pattern)
+    agent_version: OptionalSemVerStr = None
     role: str | None = None
 
     @field_validator("agent_id")
@@ -30,7 +30,7 @@ class ModelUsedEntry(BaseModel):
     """Model that contributed to the context."""
 
     model_id: str
-    model_version: str | None = Field(None, pattern=SEMVER_PATTERN.pattern)
+    model_version: OptionalSemVerStr = None
     role: str | None = None
 
     @field_validator("model_id")

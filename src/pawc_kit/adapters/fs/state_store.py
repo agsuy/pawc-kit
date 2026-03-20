@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from pawc_kit._util import utc_now
+from pawc_kit._time import utc_now
 from pawc_kit.adapters.fs._io import atomic_write
 from pawc_kit.contracts.errors import ConcurrencyError, StateError, StateNotFoundError
 from pawc_kit.contracts.state import SessionState

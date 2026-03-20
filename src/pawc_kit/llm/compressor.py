@@ -229,7 +229,7 @@ class SemanticCompressor:
                 "Install with: pip install 'pawc-kit[semantic]'"
             ) from exc
 
-        splitter = MarkdownSplitter(chunk_size=self._config.chunk_size)
+        splitter = MarkdownSplitter(self._config.chunk_size)
         raw_chunks: list[str] = splitter.chunks(content)
 
         compressed_parts: list[str] = []

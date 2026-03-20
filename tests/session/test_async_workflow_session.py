@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from conftest import make_simple_graph
-from pawc_kit._util import utc_now
+from pawc_kit._time import utc_now
 from pawc_kit.async_session import AsyncWorkflowSession
 from pawc_kit.contracts import ConfigurationError, RootConfig, SkillConfig
 from pawc_kit.contracts.artifacts import HandoffContext

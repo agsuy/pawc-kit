@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pawc_kit._util import utc_now
+from pawc_kit._time import utc_now
 from pawc_kit.context import ContextPack
 from pawc_kit.contracts.state import SessionState
 from pawc_kit.ports.artifacts import ArtifactReader

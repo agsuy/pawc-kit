@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from pawc_kit._util import utc_now
+from pawc_kit._time import utc_now
 from pawc_kit.workflow.graph import PhaseDefinition, PhaseGraph
 from pawc_kit.workflow.roles import (
     ExecutionContext,

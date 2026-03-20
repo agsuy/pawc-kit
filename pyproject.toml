@@ -7,21 +7,24 @@ name = "pawc-kit"
 version = "0.1.0"
 description = "PAWC Core: shared SDK for workflow models, state, layout, and orchestration"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 keywords = ["workflow", "orchestration", "llm", "sdk"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Typing :: Typed",
 ]
 dependencies = [
     "pydantic>=2.0",
     "pyyaml>=6.0",
+    "semver>=3.0,<4",
     "toon-formatter>=1.0",
+]
+authors = [
+    { name = "agsuy", email = "37564412+agsuy@users.noreply.github.com" },
 ]
 
 [project.urls]
@@ -58,15 +61,48 @@ show_missing = true
 
 [dependency-groups]
 dev = [
-    "pawc-kit[otel]",
+    "pawc-kit[otel,semantic]",
     "pyright>=1.1.408",
     "pytest>=9.0.2",
     "pytest-cov>=6.0",
+    "python-semantic-release>=10.5",
     "ruff>=0.15.6",
 ]
 
+[tool.semantic_release]
+commit_author = "agsuy <37564412+agsuy@users.noreply.github.com>"
+commit_message = "chore(release): {version}\n\n[skip ci]"
+commit_parser = "conventional"
+tag_format = "v{version}"
+allow_zero_version = true
+major_on_zero = false
+version_toml = ["pyproject.toml:project.version"]
+version_variables = ["src/pawc_kit/__init__.py:__version__"]
+build_command = """
+uv lock --upgrade-package "$PACKAGE_NAME"
+git add uv.lock
+uv build
+"""
+
+[tool.semantic_release.branches.main]
+match = "(main)"
+prerelease = false
+
+[tool.semantic_release.changelog.default_templates]
+changelog_file = "CHANGELOG.md"
+mask_initial_release = true
+
+[tool.semantic_release.remote]
+type = "github"
+
+[tool.semantic_release.remote.token]
+env = "GH_TOKEN"
+
+[tool.semantic_release.publish]
+upload_to_vcs_release = true
+
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 line-length = 100
 src = ["src", "tests"]
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping, cast
 
-from pawc_kit._util import UNSET, UnsetType
+from pawc_kit._sentinel import UNSET, UnsetType
 from pawc_kit.adapters.factory import build_sync_observer
 from pawc_kit.adapters.fs.artifact_store import FsArtifactStore
 from pawc_kit.adapters.fs.state_store import FsStateStore

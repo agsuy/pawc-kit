@@ -44,7 +44,7 @@ class ContextCapturingWorker:
         self.received_context: ContextPack | None = None
 
     def execute(self, ctx: ExecutionContext) -> ExecutionResult:
-        from pawc_kit._util import utc_now
+        from pawc_kit._time import utc_now
 
         self.received_context = ctx.context
         return ExecutionResult(
@@ -62,7 +62,7 @@ class ContextCapturingReviewer:
         self.received_context: ContextPack | None = None
 
     def review(self, ctx: ReviewContext) -> ReviewResult:
-        from pawc_kit._util import utc_now
+        from pawc_kit._time import utc_now
 
         self.received_context = ctx.context
         return ReviewResult(
