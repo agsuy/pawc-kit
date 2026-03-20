@@ -8,7 +8,9 @@ from pawc_kit.config import load_role_config, load_root_config, load_yaml_config
 from pawc_kit.context import ContextPack, accessible_packs, load_context_pack
 from pawc_kit.contracts import (
     ArtifactRef,
+    ContextPayload,
     DecisionPayload,
+    ExecutionRequest,
     FindingEntry,
     HandoffArtifact,
     HandoffArtifactMetadata,
@@ -17,6 +19,7 @@ from pawc_kit.contracts import (
     IterationEntry,
     KeyArtifactRef,
     ReviewEntry,
+    ReviewRequest,
     SessionState,
 )
 from pawc_kit.contracts.config import (
@@ -136,8 +139,12 @@ __all__ = [
     "LayoutManager",
     # Context
     "ContextPack",
+    "ContextPayload",
     "accessible_packs",
     "load_context_pack",
+    # Execution DTOs
+    "ExecutionRequest",
+    "ReviewRequest",
     # Validators
     "check_quality_gates",
     "validate_composition",

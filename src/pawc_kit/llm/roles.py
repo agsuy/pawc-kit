@@ -16,6 +16,7 @@ from pawc_kit.contracts import (
     HandoffContext,
     RoleConfig,
 )
+from pawc_kit.contracts.execution import ExecutionRequest, ReviewRequest
 from pawc_kit.llm.backend import AsyncLLMBackend, LLMBackend, TokenUsage
 from pawc_kit.llm.prompts import DefaultPromptAssembler
 from pawc_kit.llm.structured import AsyncStructuredOutput, StructuredOutput
@@ -25,10 +26,8 @@ from pawc_kit.validators import check_quality_gates
 from pawc_kit.workflow import (
     AsyncExecutor,
     AsyncReviewer,
-    ExecutionContext,
     ExecutionResult,
     Executor,
-    ReviewContext,
     ReviewDecision,
     Reviewer,
     ReviewResult,
@@ -140,15 +139,15 @@ class LLMExecutorRole(Executor):
         self.last_usage: TokenUsage | None = None
         self.last_token_estimate: dict | None = None
 
-    def execute(self, ctx: ExecutionContext) -> ExecutionResult:
+    def execute(self, req: ExecutionRequest) -> ExecutionResult:
         role_config = _resolve_role_config(
-            ctx.phase.role_id,
+            req.phase.role_id,
             self._role_configs,
-            ctx.phase.role_overrides,
+            req.phase.role_overrides,
         )
         skip = _should_skip_schema(self._backend, self._efficiency)
         system, user = self._assembler.executor_prompts(
-            ctx,
+            req,
             role_config,
             efficiency=self._efficiency,
             injection=self._injection,
@@ -161,13 +160,13 @@ class LLMExecutorRole(Executor):
         output = structured.call(system, user, ExecutorOutput)
         self.last_usage = structured.last_usage
         return ExecutionResult(
-            role_id=ctx.phase.role_id,
+            role_id=req.phase.role_id,
             ended_at=utc_now(),
             confidence_score=output.confidence_score,
             summary=output.summary,
             handoff=output.handoff,
             artifacts=output.artifacts,
-            chosen_next=resolve_chosen_next(output.confidence_score, ctx.phase.routing),
+            chosen_next=resolve_chosen_next(output.confidence_score, req.phase.routing),
         )
 
 
@@ -195,15 +194,15 @@ class LLMReviewerRole(Reviewer):
         self.last_usage: TokenUsage | None = None
         self.last_token_estimate: dict | None = None
 
-    def review(self, ctx: ReviewContext) -> ReviewResult:
+    def review(self, req: ReviewRequest) -> ReviewResult:
         role_config = _resolve_role_config(
-            ctx.phase.role_id,
+            req.phase.role_id,
             self._role_configs,
-            ctx.phase.role_overrides,
+            req.phase.role_overrides,
         )
         skip = _should_skip_schema(self._backend, self._efficiency)
         system, user = self._assembler.reviewer_prompts(
-            ctx,
+            req,
             role_config,
             quality_gates=dict(self._quality_gates),
             efficiency=self._efficiency,
@@ -230,10 +229,10 @@ class LLMReviewerRole(Reviewer):
 
         chosen_next: str | None = None
         if decision == "APPROVE":
-            chosen_next = resolve_chosen_next(output.confidence_score, ctx.phase.routing)
+            chosen_next = resolve_chosen_next(output.confidence_score, req.phase.routing)
 
         return ReviewResult(
-            role_id=ctx.phase.role_id,
+            role_id=req.phase.role_id,
             ended_at=utc_now(),
             decision=ReviewDecision(
                 decision=decision,
@@ -270,15 +269,15 @@ class AsyncLLMExecutorRole(AsyncExecutor):
         self.last_usage: TokenUsage | None = None
         self.last_token_estimate: dict | None = None
 
-    async def execute(self, ctx: ExecutionContext) -> ExecutionResult:
+    async def execute(self, req: ExecutionRequest) -> ExecutionResult:
         role_config = _resolve_role_config(
-            ctx.phase.role_id,
+            req.phase.role_id,
             self._role_configs,
-            ctx.phase.role_overrides,
+            req.phase.role_overrides,
         )
         skip = _should_skip_schema(self._backend, self._efficiency)
         system, user = self._assembler.executor_prompts(
-            ctx,
+            req,
             role_config,
             efficiency=self._efficiency,
             injection=self._injection,
@@ -291,13 +290,13 @@ class AsyncLLMExecutorRole(AsyncExecutor):
         output = await structured.call(system, user, ExecutorOutput)
         self.last_usage = structured.last_usage
         return ExecutionResult(
-            role_id=ctx.phase.role_id,
+            role_id=req.phase.role_id,
             ended_at=utc_now(),
             confidence_score=output.confidence_score,
             summary=output.summary,
             handoff=output.handoff,
             artifacts=output.artifacts,
-            chosen_next=resolve_chosen_next(output.confidence_score, ctx.phase.routing),
+            chosen_next=resolve_chosen_next(output.confidence_score, req.phase.routing),
         )
 
 
@@ -325,15 +324,15 @@ class AsyncLLMReviewerRole(AsyncReviewer):
         self.last_usage: TokenUsage | None = None
         self.last_token_estimate: dict | None = None
 
-    async def review(self, ctx: ReviewContext) -> ReviewResult:
+    async def review(self, req: ReviewRequest) -> ReviewResult:
         role_config = _resolve_role_config(
-            ctx.phase.role_id,
+            req.phase.role_id,
             self._role_configs,
-            ctx.phase.role_overrides,
+            req.phase.role_overrides,
         )
         skip = _should_skip_schema(self._backend, self._efficiency)
         system, user = self._assembler.reviewer_prompts(
-            ctx,
+            req,
             role_config,
             quality_gates=dict(self._quality_gates),
             efficiency=self._efficiency,
@@ -360,10 +359,10 @@ class AsyncLLMReviewerRole(AsyncReviewer):
 
         chosen_next: str | None = None
         if decision == "APPROVE":
-            chosen_next = resolve_chosen_next(output.confidence_score, ctx.phase.routing)
+            chosen_next = resolve_chosen_next(output.confidence_score, req.phase.routing)
 
         return ReviewResult(
-            role_id=ctx.phase.role_id,
+            role_id=req.phase.role_id,
             ended_at=utc_now(),
             decision=ReviewDecision(
                 decision=decision,

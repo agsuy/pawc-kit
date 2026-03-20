@@ -16,8 +16,8 @@ from pawc_kit.contracts.config import (
 )
 
 if TYPE_CHECKING:
+    from pawc_kit.contracts.execution import ExecutionRequest, ReviewRequest
     from pawc_kit.ports.compressor import ContextCompressor
-    from pawc_kit.workflow.roles import ExecutionContext, ReviewContext
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +205,7 @@ def abbreviated_schema(model: type[BaseModel]) -> str:
 
 
 def context_section(
-    ctx: ExecutionContext | ReviewContext,
+    ctx: ExecutionRequest | ReviewRequest,
     efficiency: EfficiencyConfig | None = None,
 ) -> str:
     verbosity = efficiency.prompt_verbosity if efficiency else "full"
@@ -312,7 +312,7 @@ def schema_instructions(model: type[BaseModel]) -> str:
 
 
 def request_section(
-    ctx: ExecutionContext | ReviewContext,
+    ctx: ExecutionRequest | ReviewRequest,
     injection: ContextInjectionConfig | None = None,
     compressor: ContextCompressor | None = None,
 ) -> str:
@@ -357,7 +357,7 @@ def request_section(
             for filename, content in child.request_files.items():
                 if not _should_include(filename):
                     continue
-                parts.append(f"\n### {filename} (from: {child.metadata.context_id})")
+                parts.append(f"\n### {filename} (from: {child.context_id})")
                 parts.append(_compress(content))
 
     if len(parts) == 1:
@@ -366,7 +366,7 @@ def request_section(
 
 
 def discovery_section(
-    ctx: ExecutionContext | ReviewContext,
+    ctx: ExecutionRequest | ReviewRequest,
     injection: ContextInjectionConfig | None = None,
     compressor: ContextCompressor | None = None,
 ) -> str:
@@ -417,7 +417,7 @@ class DefaultPromptAssembler:
 
     def executor_prompts(
         self,
-        ctx: ExecutionContext,
+        ctx: ExecutionRequest,
         role_config: RoleConfig | None = None,
         *,
         efficiency: EfficiencyConfig | None = None,
@@ -464,7 +464,7 @@ class DefaultPromptAssembler:
 
     def reviewer_prompts(
         self,
-        ctx: ReviewContext,
+        ctx: ReviewRequest,
         role_config: RoleConfig | None = None,
         *,
         quality_gates: dict | None = None,

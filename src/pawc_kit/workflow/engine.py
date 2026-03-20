@@ -21,6 +21,7 @@ from pawc_kit.contracts.events import (
     RunStarted,
     WorkflowEvent,
 )
+from pawc_kit.contracts.execution import ContextPayload, ExecutionRequest, ReviewRequest
 from pawc_kit.contracts.state import IterationEntry, ReviewEntry, SessionState
 from pawc_kit.ports.artifacts import ArtifactStore, AsyncArtifactStore
 from pawc_kit.ports.clock import AsyncClock, Clock
@@ -30,10 +31,8 @@ from pawc_kit.workflow.graph import PhaseDefinition, PhaseGraph
 from pawc_kit.workflow.roles import (
     AsyncExecutor,
     AsyncReviewer,
-    ExecutionContext,
     ExecutionResult,
     Executor,
-    ReviewContext,
     Reviewer,
     WorkflowHistoryView,
 )
@@ -149,6 +148,21 @@ def _scope_context_pack(pack: ContextPack, phase: PhaseDefinition) -> ContextPac
 
     packs = accessible_packs(pack, phase.context_sources)
     return replace(pack, children=packs[1:])
+
+
+def _context_payload_from_pack(pack: ContextPack) -> ContextPayload:
+    """Recursively convert a ``ContextPack`` to a serializable ``ContextPayload``.
+
+    The pack must already be scoped (via ``_scope_context_pack``) before this
+    conversion so that ``context_sources`` filtering happens on the ``ContextPack``
+    graph where ``child.metadata.context_id`` is available.
+    """
+    return ContextPayload(
+        context_id=pack.metadata.context_id if pack.metadata else "",
+        request_files=dict(pack.request_files),
+        discovery_handoff=pack.discovery_handoff,
+        children=[_context_payload_from_pack(child) for child in pack.children],
+    )
 
 
 def _phase_role_id(graph: PhaseGraph, phase_id: str | None) -> str | None:
@@ -405,27 +419,25 @@ class WorkflowEngine:
             previous_decision=previous_decision,
         )
 
-    def _build_execution_context(
+    def _build_execution_request(
         self, runtime: _SyncRuntime, phase: PhaseDefinition
-    ) -> ExecutionContext:
+    ) -> ExecutionRequest:
         scoped = _scope_context_pack(runtime.context_pack, phase)
-        return ExecutionContext(
+        return ExecutionRequest(
             session=_clone_state(runtime.state),
             phase=phase,
             history=self._history_for_phase(runtime, phase),
-            artifacts=self._artifact_store,
-            context=scoped,
+            context=_context_payload_from_pack(scoped),
             metadata=self._metadata,
         )
 
-    def _build_review_context(self, runtime: _SyncRuntime, phase: PhaseDefinition) -> ReviewContext:
+    def _build_review_request(self, runtime: _SyncRuntime, phase: PhaseDefinition) -> ReviewRequest:
         scoped = _scope_context_pack(runtime.context_pack, phase)
-        return ReviewContext(
+        return ReviewRequest(
             session=_clone_state(runtime.state),
             phase=phase,
             history=self._history_for_phase(runtime, phase),
-            artifacts=self._artifact_store,
-            context=scoped,
+            context=_context_payload_from_pack(scoped),
             metadata=self._metadata,
             approval_targets=self._graph.on_approve_targets(phase.phase_id),
             request_change_targets=self._graph.can_request_changes_from_targets(phase.phase_id),
@@ -443,7 +455,7 @@ class WorkflowEngine:
 
         while True:
             started_at = self._clock.now()
-            result = role.execute(self._build_execution_context(runtime, phase))
+            result = role.execute(self._build_execution_request(runtime, phase))
             last_result = result
             _validate_role_output(
                 phase,
@@ -522,7 +534,7 @@ class WorkflowEngine:
             )
 
         started_at = self._clock.now()
-        result = role.review(self._build_review_context(runtime, phase))
+        result = role.review(self._build_review_request(runtime, phase))
         _validate_role_output(
             phase,
             role_id=result.role_id,
@@ -837,29 +849,27 @@ class AsyncWorkflowEngine:
             previous_decision=previous_decision,
         )
 
-    async def _build_execution_context(
+    async def _build_execution_request(
         self, runtime: _AsyncRuntime, phase: PhaseDefinition
-    ) -> ExecutionContext:
+    ) -> ExecutionRequest:
         scoped = _scope_context_pack(runtime.context_pack, phase)
-        return ExecutionContext(
+        return ExecutionRequest(
             session=_clone_state(runtime.state),
             phase=phase,
             history=await self._history_for_phase(runtime, phase),
-            artifacts=self._artifact_store,
-            context=scoped,
+            context=_context_payload_from_pack(scoped),
             metadata=self._metadata,
         )
 
-    async def _build_review_context(
+    async def _build_review_request(
         self, runtime: _AsyncRuntime, phase: PhaseDefinition
-    ) -> ReviewContext:
+    ) -> ReviewRequest:
         scoped = _scope_context_pack(runtime.context_pack, phase)
-        return ReviewContext(
+        return ReviewRequest(
             session=_clone_state(runtime.state),
             phase=phase,
             history=await self._history_for_phase(runtime, phase),
-            artifacts=self._artifact_store,
-            context=scoped,
+            context=_context_payload_from_pack(scoped),
             metadata=self._metadata,
             approval_targets=self._graph.on_approve_targets(phase.phase_id),
             request_change_targets=self._graph.can_request_changes_from_targets(phase.phase_id),
@@ -878,7 +888,7 @@ class AsyncWorkflowEngine:
 
         while True:
             started_at = await self._clock.now()
-            result = await role.execute(await self._build_execution_context(runtime, phase))
+            result = await role.execute(await self._build_execution_request(runtime, phase))
             last_result = result
             _validate_role_output(
                 phase,
@@ -958,7 +968,7 @@ class AsyncWorkflowEngine:
             )
 
         started_at = await self._clock.now()
-        result = await role.review(await self._build_review_context(runtime, phase))
+        result = await role.review(await self._build_review_request(runtime, phase))
         _validate_role_output(
             phase,
             role_id=result.role_id,
