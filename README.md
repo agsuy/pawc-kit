@@ -22,12 +22,21 @@ Using `uv`:
 uv sync --dev
 ```
 
+Core dependencies include [**semver**](https://pypi.org/project/semver/) for SemVer 2.0 validation of skill/role and session version fields.
+
 Optional extras:
 
 - **OpenTelemetry** — metrics and tracing: `uv sync --dev --extra otel` or `pip install -e .[otel]`
 - **Semantic compression** — [semantic-text-splitter](https://github.com/benbrandt/text-splitter) for chunk-based prompt compression: `uv sync --dev --extra semantic` or `pip install -e .[semantic]`
 
-Requires Python 3.11+.
+Requires Python 3.12+.
+
+## Releases
+
+The repo includes [python-semantic-release](https://python-semantic-release.readthedocs.io/)
+configuration for SemVer bumps, [`CHANGELOG.md`](CHANGELOG.md), and `v*`
+release tags based on conventional commits (see
+[`CONTRIBUTING.md`](CONTRIBUTING.md)).
 
 ## Quick Start (config-driven)
 

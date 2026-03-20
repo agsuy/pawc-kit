@@ -4,7 +4,7 @@
 
 ### Format
 
-- Use Conventional Commits.
+- Use [Conventional Commits v1.0.0](https://www.conventionalcommits.org/en/v1.0.0/).
 - Preferred format: `type(scope): subject`
 - Omit `scope` when it does not add value.
 - Keep the subject concise, imperative, and optimized for searchability.
@@ -28,6 +28,27 @@ Examples:
 
 - Technical domain terms are allowed when they describe the code rather than attribution. Example: `feat(llm): ...` is valid.
 - If a commit needs a body, use it to explain why and impact, not chatty implementation detail.
+
+## Versioning
+
+This project follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
+All version fields in contracts (`SkillConfig`, `RoleConfig`, `SessionState`, etc.) are
+validated against the SemVer 2.0.0 grammar at runtime.
+
+### Library package version and changelog
+
+The repo includes [python-semantic-release](https://python-semantic-release.readthedocs.io/)
+configuration that reads [Conventional Commits](https://www.conventionalcommits.org/)
+since the last `v*` tag and manages **SemVer** bumps, both version locations below,
+and [`CHANGELOG.md`](CHANGELOG.md).
+
+The version is still declared in two places and must stay in sync:
+
+- `pyproject.toml` (`project.version`)
+- `src/pawc_kit/__init__.py` (`__version__`)
+
+Use `scripts/check-version.sh` locally to confirm the two fields match and are valid SemVer
+after any manual edit.
 
 ## Tooling
 
