@@ -8,11 +8,11 @@ version = "0.1.0"
 description = "PAWC Core: shared SDK for workflow models, state, layout, and orchestration"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 keywords = ["workflow", "orchestration", "llm", "sdk"]
 classifiers = [
     "Development Status :: 3 - Alpha",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.12",
     "Typing :: Typed",
