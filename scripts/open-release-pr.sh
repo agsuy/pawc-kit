@@ -148,7 +148,7 @@ echo "PR title      : $pr_title"
 
 # ── check for existing PR ─────────────────────────────────────────────────
 
-existing_pr_url="$(gh pr view "$current_branch" --json url --jq '.url' 2>/dev/null || true)"
+existing_pr_url="$(gh pr view "$current_branch" --json url,state --jq 'select(.state == "OPEN") | .url' 2>/dev/null || true)"
 
 # ── build gh command ───────────────────────────────────────────────────────
 
