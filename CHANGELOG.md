@@ -1,3 +1,7 @@
 # Changelog
 
 <!-- version list -->
+
+## v0.1.0 (2026-03-20)
+
+- Initial Release
