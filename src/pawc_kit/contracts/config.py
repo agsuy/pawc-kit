@@ -27,6 +27,7 @@ class ObservabilityConfig(BaseModel):
 
     observer: Literal["otel", "logging", "none"] = "none"
     meter_name: str = "pawc_kit.workflow"
+    tracer_name: str = "pawc_kit.workflow"
     logger_name: str = "pawc_kit.workflow"
 
 

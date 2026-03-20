@@ -33,13 +33,20 @@ def test_observability_config_defaults() -> None:
     cfg = ObservabilityConfig.model_validate({})
     assert cfg.observer == "none"
     assert cfg.meter_name == "pawc_kit.workflow"
+    assert cfg.tracer_name == "pawc_kit.workflow"
     assert cfg.logger_name == "pawc_kit.workflow"
 
 
 def test_observability_config_explicit_values() -> None:
-    cfg = ObservabilityConfig(observer="otel", meter_name="my.meter", logger_name="my.logger")
+    cfg = ObservabilityConfig(
+        observer="otel",
+        meter_name="my.meter",
+        tracer_name="my.tracer",
+        logger_name="my.logger",
+    )
     assert cfg.observer == "otel"
     assert cfg.meter_name == "my.meter"
+    assert cfg.tracer_name == "my.tracer"
     assert cfg.logger_name == "my.logger"
 
 
