@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -106,6 +106,7 @@ class SessionState(BaseModel):
     status: Literal["initialized", "in_progress", "completed", "abandoned"] = "initialized"
     completed_at: str | None = None
     metrics: dict | None = None
+    run_metadata: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def _completed_at_invariant(self) -> "SessionState":

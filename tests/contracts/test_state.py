@@ -253,3 +253,31 @@ def test_session_state_json_roundtrip(minimal_session: SessionState) -> None:
     reloaded = SessionState.model_validate_json(minimal_session.model_dump_json())
     assert reloaded.session_id == minimal_session.session_id
     assert reloaded.skill_version == minimal_session.skill_version
+
+
+def test_session_state_run_metadata_defaults_to_none(minimal_session: SessionState) -> None:
+    assert minimal_session.run_metadata is None
+
+
+def test_session_state_run_metadata_round_trips() -> None:
+    state = SessionState(
+        session_id="s1",
+        skill_name="skill",
+        skill_version="1.0.0",
+        started_at="2026-01-01T00:00:00Z",
+        current_phase="work",
+        run_metadata={"model": "gpt-4", "temperature": 0.7},
+    )
+    reloaded = SessionState.model_validate_json(state.model_dump_json())
+    assert reloaded.run_metadata == {"model": "gpt-4", "temperature": 0.7}
+
+
+def test_session_state_run_metadata_absent_in_json_defaults_to_none() -> None:
+    json_without_metadata = (
+        '{"session_id":"s1","skill_name":"skill","skill_version":"1.0.0",'
+        '"started_at":"2026-01-01T00:00:00Z","current_phase":"work",'
+        '"phase_iterations":[],"reviews":[],"feedback_loops":0,'
+        '"status":"initialized","completed_at":null}'
+    )
+    state = SessionState.model_validate_json(json_without_metadata)
+    assert state.run_metadata is None
