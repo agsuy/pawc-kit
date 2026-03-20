@@ -8,6 +8,7 @@ from pawc_kit.ports.artifacts import (
 )
 from pawc_kit.ports.clock import AsyncClock, Clock
 from pawc_kit.ports.compressor import ContextCompressor
+from pawc_kit.ports.controller import RunController, RunSignal
 from pawc_kit.ports.invoker import AsyncRoleInvoker, RoleInvoker
 from pawc_kit.ports.observers import AsyncWorkflowObserver, WorkflowObserver
 from pawc_kit.ports.prompts import PromptAssembler
@@ -35,6 +36,8 @@ __all__ = [
     "PromptAssembler",
     "ResolvedBackend",
     "RoleInvoker",
+    "RunController",
+    "RunSignal",
     "RuntimeBackend",
     "SessionMetadata",
     "StateStore",
