@@ -9,12 +9,14 @@ from typing import Any, Mapping, cast
 from pawc_kit._sentinel import UNSET, UnsetType
 from pawc_kit.adapters.factory import build_async_observer
 from pawc_kit.adapters.fs.runtime import AsyncFsRuntimeBackend
+from pawc_kit.adapters.local_invoker import AsyncLocalRoleInvoker
 from pawc_kit.config import load_root_config
 from pawc_kit.context import ContextPack, load_context_pack
 from pawc_kit.contracts.config import RootConfig
 from pawc_kit.contracts.errors import ConfigurationError
 from pawc_kit.contracts.state import SessionState
 from pawc_kit.ports.clock import AsyncClock
+from pawc_kit.ports.invoker import AsyncRoleInvoker
 from pawc_kit.ports.observers import AsyncWorkflowObserver
 from pawc_kit.ports.runtime import AsyncRuntimeBackend
 from pawc_kit.workflow.engine import AsyncWorkflowEngine
@@ -51,6 +53,7 @@ class AsyncWorkflowSession:
         run_directory: str | None = None,
         state_filename: str | None = None,
         backend: AsyncRuntimeBackend | None = None,
+        invoker: AsyncRoleInvoker | None = None,
         observer: AsyncWorkflowObserver | None | UnsetType = UNSET,
         clock: AsyncClock | None = None,
         confidence_threshold: int | None = None,
@@ -67,6 +70,7 @@ class AsyncWorkflowSession:
             run_directory=run_directory,
             state_filename=state_filename,
             backend=backend,
+            invoker=invoker,
             observer=observer,
             clock=clock,
             confidence_threshold=confidence_threshold,
@@ -84,6 +88,7 @@ class AsyncWorkflowSession:
         run_directory: str | None = None,
         state_filename: str | None = None,
         backend: AsyncRuntimeBackend | None = None,
+        invoker: AsyncRoleInvoker | None = None,
         observer: AsyncWorkflowObserver | None | UnsetType = UNSET,
         clock: AsyncClock | None = None,
         confidence_threshold: int | None = None,
@@ -141,6 +146,8 @@ class AsyncWorkflowSession:
             self._observer = cast(AsyncWorkflowObserver | None, observer)
         self._clock = clock
         self._metadata = metadata
+        self._explicit_invoker = invoker is not None
+        self._invoker = invoker
         self._role_bindings: dict[str, AsyncExecutor | AsyncReviewer] = {}
 
     @property
@@ -150,6 +157,10 @@ class AsyncWorkflowSession:
 
     def register_role(self, role_id: str, role: AsyncExecutor | AsyncReviewer) -> None:
         """Bind an async role implementation to a role_id."""
+        if self._explicit_invoker:
+            raise ConfigurationError(
+                "register_role() is not supported when an explicit invoker is provided"
+            )
         self._role_bindings[role_id] = role
 
     def load_context(self, context_id: str) -> ContextPack:
@@ -185,6 +196,14 @@ class AsyncWorkflowSession:
         )
         resolved = await backend.resolve(session_id=session_id)
 
+        if self._explicit_invoker:
+            async_invoker: AsyncRoleInvoker = self._invoker  # type: ignore[assignment]
+        else:
+            local = AsyncLocalRoleInvoker()
+            for role_id, role in self._role_bindings.items():
+                local.register_role(role_id, role)
+            async_invoker = local
+
         engine = AsyncWorkflowEngine(
             graph=self._graph,
             state_store=resolved.state_store,
@@ -196,9 +215,8 @@ class AsyncWorkflowSession:
             max_feedback_rounds=self._max_feedback_rounds,
             confidence_floor=self._confidence_floor,
             metadata=self._metadata,
+            invoker=async_invoker,
         )
-        for role_id, role in self._role_bindings.items():
-            engine.register_role(role_id, role)
 
         return await engine.run(
             session_id=session_id,

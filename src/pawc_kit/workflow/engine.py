@@ -25,6 +25,7 @@ from pawc_kit.contracts.execution import ContextPayload, ExecutionRequest, Revie
 from pawc_kit.contracts.state import IterationEntry, ReviewEntry, SessionState
 from pawc_kit.ports.artifacts import ArtifactStore, AsyncArtifactStore
 from pawc_kit.ports.clock import AsyncClock, Clock
+from pawc_kit.ports.invoker import AsyncRoleInvoker, RoleInvoker
 from pawc_kit.ports.observers import AsyncWorkflowObserver, WorkflowObserver
 from pawc_kit.ports.state import AsyncStateStore, SessionMetadata, StateStore, StoredSession
 from pawc_kit.workflow.graph import PhaseDefinition, PhaseGraph
@@ -221,6 +222,7 @@ class WorkflowEngine:
         max_feedback_rounds: int = 3,
         confidence_floor: int | None = None,
         metadata: Mapping[str, Any] | None = None,
+        invoker: RoleInvoker | None = None,
     ) -> None:
         self._graph = graph
         self._state_store = state_store
@@ -232,10 +234,23 @@ class WorkflowEngine:
         self._max_feedback_rounds = max_feedback_rounds
         self._confidence_floor = confidence_floor
         self._metadata = metadata
-        self._role_bindings: dict[str, object] = {}
+        self._explicit_invoker = invoker is not None
+        if invoker is not None:
+            self._invoker: RoleInvoker = invoker
+        else:
+            from pawc_kit.adapters.local_invoker import LocalRoleInvoker
+
+            self._invoker = LocalRoleInvoker()
 
     def register_role(self, role_id: str, role: Executor | Reviewer) -> None:
-        self._role_bindings[role_id] = role
+        from pawc_kit.adapters.local_invoker import LocalRoleInvoker
+
+        if self._explicit_invoker:
+            raise ConfigurationError(
+                "register_role() is not supported when an explicit invoker is provided"
+            )
+        assert isinstance(self._invoker, LocalRoleInvoker)
+        self._invoker.register_role(role_id, role)
 
     def run(
         self,
@@ -263,7 +278,7 @@ class WorkflowEngine:
         try:
             if runtime.state.status in ("completed", "abandoned"):
                 return runtime.state
-            self._validate_role_bindings()
+            self._invoker.validate(self._graph)
             self._graph.validate_against_pack(pack)
 
             if runtime.state.status == "initialized":
@@ -302,23 +317,6 @@ class WorkflowEngine:
                 )
             )
             raise
-
-    def _validate_role_bindings(self) -> None:
-        for phase_id in self._graph.phase_ids:
-            phase = self._graph.get(phase_id)
-            role = self._role_bindings.get(phase.role_id)
-            if role is None:
-                raise ConfigurationError(
-                    f"Phase {phase.phase_id!r} references unregistered role_id {phase.role_id!r}"
-                )
-            if phase.kind == "executor" and not isinstance(role, Executor):
-                raise ConfigurationError(
-                    f"role_id {phase.role_id!r} is bound to a non-executor implementation"
-                )
-            if phase.kind == "review" and not isinstance(role, Reviewer):
-                raise ConfigurationError(
-                    f"role_id {phase.role_id!r} is bound to a non-reviewer implementation"
-                )
 
     def _load_or_initialize(self, metadata: SessionMetadata) -> StoredSession:
         try:
@@ -450,18 +448,12 @@ class WorkflowEngine:
         )
 
     def _run_executor(self, runtime: _SyncRuntime, phase: PhaseDefinition) -> None:
-        role = self._role_bindings.get(phase.role_id)
-        if not isinstance(role, Executor):
-            raise TransitionError(
-                f"No Executor registered for role_id {phase.role_id!r} in phase {phase.phase_id!r}"
-            )
-
         iteration_count = _count_iterations(runtime.state, phase.phase_id)
         last_result: ExecutionResult | None = None
 
         while True:
             started_at = self._clock.now()
-            result = role.execute(self._build_execution_request(runtime, phase))
+            result = self._invoker.invoke_executor(self._build_execution_request(runtime, phase))
             last_result = result
             _validate_role_output(
                 phase,
@@ -533,14 +525,8 @@ class WorkflowEngine:
         self._transition_to(runtime, phase.phase_id, next_phase)
 
     def _run_review(self, runtime: _SyncRuntime, phase: PhaseDefinition) -> None:
-        role = self._role_bindings.get(phase.role_id)
-        if not isinstance(role, Reviewer):
-            raise TransitionError(
-                f"No Reviewer registered for role_id {phase.role_id!r} in phase {phase.phase_id!r}"
-            )
-
         started_at = self._clock.now()
-        result = role.review(self._build_review_request(runtime, phase))
+        result = self._invoker.invoke_reviewer(self._build_review_request(runtime, phase))
         _validate_role_output(
             phase,
             role_id=result.role_id,
@@ -652,6 +638,7 @@ class AsyncWorkflowEngine:
         max_feedback_rounds: int = 3,
         confidence_floor: int | None = None,
         metadata: Mapping[str, Any] | None = None,
+        invoker: AsyncRoleInvoker | None = None,
     ) -> None:
         self._graph = graph
         self._state_store = state_store
@@ -663,10 +650,23 @@ class AsyncWorkflowEngine:
         self._max_feedback_rounds = max_feedback_rounds
         self._confidence_floor = confidence_floor
         self._metadata = metadata
-        self._role_bindings: dict[str, object] = {}
+        self._explicit_invoker = invoker is not None
+        if invoker is not None:
+            self._invoker: AsyncRoleInvoker = invoker
+        else:
+            from pawc_kit.adapters.local_invoker import AsyncLocalRoleInvoker
+
+            self._invoker = AsyncLocalRoleInvoker()
 
     def register_role(self, role_id: str, role: AsyncExecutor | AsyncReviewer) -> None:
-        self._role_bindings[role_id] = role
+        from pawc_kit.adapters.local_invoker import AsyncLocalRoleInvoker
+
+        if self._explicit_invoker:
+            raise ConfigurationError(
+                "register_role() is not supported when an explicit invoker is provided"
+            )
+        assert isinstance(self._invoker, AsyncLocalRoleInvoker)
+        self._invoker.register_role(role_id, role)
 
     async def run(
         self,
@@ -694,7 +694,7 @@ class AsyncWorkflowEngine:
         try:
             if runtime.state.status in ("completed", "abandoned"):
                 return runtime.state
-            self._validate_role_bindings()
+            self._invoker.validate(self._graph)
             self._graph.validate_against_pack(pack)
 
             if runtime.state.status == "initialized":
@@ -733,23 +733,6 @@ class AsyncWorkflowEngine:
                 )
             )
             raise
-
-    def _validate_role_bindings(self) -> None:
-        for phase_id in self._graph.phase_ids:
-            phase = self._graph.get(phase_id)
-            role = self._role_bindings.get(phase.role_id)
-            if role is None:
-                raise ConfigurationError(
-                    f"Phase {phase.phase_id!r} references unregistered role_id {phase.role_id!r}"
-                )
-            if phase.kind == "executor" and not isinstance(role, AsyncExecutor):
-                raise ConfigurationError(
-                    f"role_id {phase.role_id!r} is bound to a non-executor implementation"
-                )
-            if phase.kind == "review" and not isinstance(role, AsyncReviewer):
-                raise ConfigurationError(
-                    f"role_id {phase.role_id!r} is bound to a non-reviewer implementation"
-                )
 
     async def _load_or_initialize(self, metadata: SessionMetadata) -> StoredSession:
         try:
@@ -888,19 +871,14 @@ class AsyncWorkflowEngine:
         )
 
     async def _run_executor(self, runtime: _AsyncRuntime, phase: PhaseDefinition) -> None:
-        role = self._role_bindings.get(phase.role_id)
-        if not isinstance(role, AsyncExecutor):
-            raise TransitionError(
-                f"No AsyncExecutor registered for role_id {phase.role_id!r} "
-                f"in phase {phase.phase_id!r}"
-            )
-
         iteration_count = _count_iterations(runtime.state, phase.phase_id)
         last_result: ExecutionResult | None = None
 
         while True:
             started_at = await self._clock.now()
-            result = await role.execute(await self._build_execution_request(runtime, phase))
+            result = await self._invoker.invoke_executor(
+                await self._build_execution_request(runtime, phase)
+            )
             last_result = result
             _validate_role_output(
                 phase,
@@ -972,15 +950,10 @@ class AsyncWorkflowEngine:
         await self._transition_to(runtime, phase.phase_id, next_phase)
 
     async def _run_review(self, runtime: _AsyncRuntime, phase: PhaseDefinition) -> None:
-        role = self._role_bindings.get(phase.role_id)
-        if not isinstance(role, AsyncReviewer):
-            raise TransitionError(
-                f"No AsyncReviewer registered for role_id {phase.role_id!r} "
-                f"in phase {phase.phase_id!r}"
-            )
-
         started_at = await self._clock.now()
-        result = await role.review(await self._build_review_request(runtime, phase))
+        result = await self._invoker.invoke_reviewer(
+            await self._build_review_request(runtime, phase)
+        )
         _validate_role_output(
             phase,
             role_id=result.role_id,

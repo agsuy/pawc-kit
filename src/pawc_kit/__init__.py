@@ -3,6 +3,7 @@
 import logging
 
 from pawc_kit.adapters.fs.runtime import AsyncFsRuntimeBackend, FsRuntimeBackend
+from pawc_kit.adapters.local_invoker import AsyncLocalRoleInvoker, LocalRoleInvoker
 from pawc_kit.async_session import AsyncWorkflowSession
 from pawc_kit.config import load_role_config, load_root_config, load_yaml_config
 from pawc_kit.context import ContextPack, accessible_packs, load_context_pack
@@ -77,6 +78,7 @@ from pawc_kit.ports import (
     AsyncArtifactStore,
     AsyncClock,
     AsyncResolvedBackend,
+    AsyncRoleInvoker,
     AsyncRuntimeBackend,
     AsyncStateStore,
     AsyncWorkflowObserver,
@@ -84,6 +86,7 @@ from pawc_kit.ports import (
     ContextCompressor,
     PromptAssembler,
     ResolvedBackend,
+    RoleInvoker,
     RuntimeBackend,
     StateStore,
     WorkflowObserver,
@@ -190,6 +193,7 @@ __all__ = [
     "AsyncArtifactStore",
     "AsyncClock",
     "AsyncResolvedBackend",
+    "AsyncRoleInvoker",
     "AsyncRuntimeBackend",
     "AsyncStateStore",
     "AsyncWorkflowObserver",
@@ -197,12 +201,16 @@ __all__ = [
     "ContextCompressor",
     "PromptAssembler",
     "ResolvedBackend",
+    "RoleInvoker",
     "RuntimeBackend",
     "StateStore",
     "WorkflowObserver",
     # Runtime backend adapters
     "AsyncFsRuntimeBackend",
     "FsRuntimeBackend",
+    # Role invoker adapters
+    "AsyncLocalRoleInvoker",
+    "LocalRoleInvoker",
     # LLM backend
     "BackendCapabilities",
     # LLM compressors

@@ -22,12 +22,14 @@ from typing import Any, Mapping, cast
 from pawc_kit._sentinel import UNSET, UnsetType
 from pawc_kit.adapters.factory import build_sync_observer
 from pawc_kit.adapters.fs.runtime import FsRuntimeBackend
+from pawc_kit.adapters.local_invoker import LocalRoleInvoker
 from pawc_kit.config import load_root_config
 from pawc_kit.context import ContextPack, load_context_pack
 from pawc_kit.contracts.config import RootConfig
 from pawc_kit.contracts.errors import ConfigurationError
 from pawc_kit.contracts.state import SessionState
 from pawc_kit.ports.clock import Clock
+from pawc_kit.ports.invoker import RoleInvoker
 from pawc_kit.ports.observers import WorkflowObserver
 from pawc_kit.ports.runtime import RuntimeBackend
 from pawc_kit.workflow.engine import WorkflowEngine
@@ -85,6 +87,7 @@ class WorkflowSession:
         run_directory: str | None = None,
         state_filename: str | None = None,
         backend: RuntimeBackend | None = None,
+        invoker: RoleInvoker | None = None,
         observer: WorkflowObserver | None | UnsetType = UNSET,
         clock: Clock | None = None,
         confidence_threshold: int | None = None,
@@ -106,6 +109,7 @@ class WorkflowSession:
             run_directory=run_directory,
             state_filename=state_filename,
             backend=backend,
+            invoker=invoker,
             observer=observer,
             clock=clock,
             confidence_threshold=confidence_threshold,
@@ -123,6 +127,7 @@ class WorkflowSession:
         run_directory: str | None = None,
         state_filename: str | None = None,
         backend: RuntimeBackend | None = None,
+        invoker: RoleInvoker | None = None,
         observer: WorkflowObserver | None | UnsetType = UNSET,
         clock: Clock | None = None,
         confidence_threshold: int | None = None,
@@ -182,6 +187,8 @@ class WorkflowSession:
             self._observer = cast(WorkflowObserver | None, observer)
         self._clock = clock
         self._metadata = metadata
+        self._explicit_invoker = invoker is not None
+        self._invoker = invoker
         self._role_bindings: dict[str, Executor | Reviewer] = {}
 
     @property
@@ -191,6 +198,10 @@ class WorkflowSession:
 
     def register_role(self, role_id: str, role: Executor | Reviewer) -> None:
         """Bind a role implementation to a ``role_id``."""
+        if self._explicit_invoker:
+            raise ConfigurationError(
+                "register_role() is not supported when an explicit invoker is provided"
+            )
         self._role_bindings[role_id] = role
 
     def load_context(self, context_id: str) -> ContextPack:
@@ -226,6 +237,14 @@ class WorkflowSession:
         )
         resolved = backend.resolve(session_id=session_id)
 
+        if self._explicit_invoker:
+            invoker: RoleInvoker = self._invoker  # type: ignore[assignment]
+        else:
+            local = LocalRoleInvoker()
+            for role_id, role in self._role_bindings.items():
+                local.register_role(role_id, role)
+            invoker = local
+
         engine = WorkflowEngine(
             graph=self._graph,
             state_store=resolved.state_store,
@@ -237,9 +256,8 @@ class WorkflowSession:
             max_feedback_rounds=self._max_feedback_rounds,
             confidence_floor=self._confidence_floor,
             metadata=self._metadata,
+            invoker=invoker,
         )
-        for role_id, role in self._role_bindings.items():
-            engine.register_role(role_id, role)
 
         return engine.run(
             session_id=session_id,
