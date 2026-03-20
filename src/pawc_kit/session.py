@@ -15,21 +15,21 @@ the corresponding kwargs explicitly -- the override always wins.
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any, Mapping, cast
 
 from pawc_kit._sentinel import UNSET, UnsetType
 from pawc_kit.adapters.factory import build_sync_observer
-from pawc_kit.adapters.fs.artifact_store import FsArtifactStore
-from pawc_kit.adapters.fs.state_store import FsStateStore
+from pawc_kit.adapters.fs.runtime import FsRuntimeBackend
 from pawc_kit.config import load_root_config
 from pawc_kit.context import ContextPack, load_context_pack
 from pawc_kit.contracts.config import RootConfig
 from pawc_kit.contracts.errors import ConfigurationError
 from pawc_kit.contracts.state import SessionState
-from pawc_kit.layout import LayoutManager
 from pawc_kit.ports.clock import Clock
 from pawc_kit.ports.observers import WorkflowObserver
+from pawc_kit.ports.runtime import RuntimeBackend
 from pawc_kit.workflow.engine import WorkflowEngine
 from pawc_kit.workflow.graph import PhaseGraph
 from pawc_kit.workflow.roles import Executor, Reviewer
@@ -41,10 +41,10 @@ class WorkflowSession:
     Use :meth:`from_config` to construct from a YAML file, or pass a
     pre-built :class:`RootConfig` to the constructor for testing.
 
-    ``run()`` creates a :class:`LayoutManager`, filesystem stores, and a
-    :class:`WorkflowEngine` per call.  It works for both new runs and
-    resumed runs: directory creation uses ``exist_ok`` and the engine
-    checks ``state.status`` to decide whether to initialise or resume.
+    ``run()`` resolves a backend (default: :class:`~pawc_kit.adapters.fs.runtime.FsRuntimeBackend`)
+    to obtain persistence stores, then creates a :class:`WorkflowEngine` per call.  It works for
+    both new runs and resumed runs: the engine checks ``state.status`` to decide whether to
+    initialise or resume.
 
     Graph resolution order (evaluated in ``__init__``):
 
@@ -65,6 +65,14 @@ class WorkflowSession:
     2. Explicit ``observer=None`` means no observer even if config specifies one.
     3. Omitted -- auto-constructed from ``config.observability`` via the adapter
        factory (``"none"`` by default, so existing configs are unaffected).
+
+    Backend resolution:
+
+    - When ``backend`` is provided, it is used as-is.  The ``run_directory`` and
+      ``state_filename`` kwargs are ignored and a :class:`UserWarning` is emitted
+      if either was also supplied.
+    - When ``backend`` is omitted (``None``), an :class:`~pawc_kit.adapters.fs.runtime.FsRuntimeBackend`
+      is built from ``config.state_directory``, ``run_directory``, and ``state_filename``.
     """
 
     @classmethod
@@ -75,6 +83,7 @@ class WorkflowSession:
         graph: PhaseGraph | None = None,
         run_directory: str | None = None,
         state_filename: str | None = None,
+        backend: RuntimeBackend | None = None,
         observer: WorkflowObserver | None | UnsetType = UNSET,
         clock: Clock | None = None,
         confidence_threshold: int | None = None,
@@ -95,6 +104,7 @@ class WorkflowSession:
             graph=graph,
             run_directory=run_directory,
             state_filename=state_filename,
+            backend=backend,
             observer=observer,
             clock=clock,
             confidence_threshold=confidence_threshold,
@@ -111,6 +121,7 @@ class WorkflowSession:
         graph: PhaseGraph | None = None,
         run_directory: str | None = None,
         state_filename: str | None = None,
+        backend: RuntimeBackend | None = None,
         observer: WorkflowObserver | None | UnsetType = UNSET,
         clock: Clock | None = None,
         confidence_threshold: int | None = None,
@@ -134,7 +145,16 @@ class WorkflowSession:
                 "No workflow graph provided: pass graph= or define workflow.phases in config.yaml"
             )
 
-        # --- Layout resolution ------------------------------------------------
+        # --- Backend resolution -----------------------------------------------
+        if backend is not None and (run_directory is not None or state_filename is not None):
+            warnings.warn(
+                "run_directory and state_filename are ignored when an explicit backend is provided.",
+                UserWarning,
+                stacklevel=2,
+            )
+        self._backend = backend
+
+        # --- Layout resolution (used when building the default FS backend) ----
         self._run_directory = run_directory if run_directory is not None else wf.run_directory
         self._state_filename = state_filename if state_filename is not None else wf.state_filename
 
@@ -188,32 +208,26 @@ class WorkflowSession:
         context_id: str | None = None,
         context_pack: ContextPack | None = None,
     ) -> SessionState:
-        """Set up layout, stores, and engine, then execute the workflow.
+        """Resolve backend stores and execute the workflow.
 
-        Safe for both new and resumed runs: ``LayoutManager`` creates
-        directories with ``exist_ok=True`` and the engine checks
-        ``state.status`` to decide whether to initialise or resume.
+        Safe for both new and resumed runs: the engine checks ``state.status``
+        to decide whether to initialise or resume.
 
         Pass a pre-loaded ``context_pack`` to make its request files and
         discovery handoff available to roles via ``ctx.context``.  When
         omitted the engine uses an empty pack (no context data in prompts).
         """
-        layout = LayoutManager(
+        backend = self._backend or FsRuntimeBackend(
             state_directory=self._config.state_directory or "",
             run_directory=self._run_directory,
-            session_id=session_id,
             state_filename=self._state_filename,
         )
-        layout.ensure_state_directory()
-        layout.initialize_run_directory()
-
-        state_store = FsStateStore(layout.run_dir, self._state_filename)
-        artifact_store = FsArtifactStore(layout.run_dir)
+        resolved = backend.resolve(session_id=session_id)
 
         engine = WorkflowEngine(
             graph=self._graph,
-            state_store=state_store,
-            artifact_store=artifact_store,
+            state_store=resolved.state_store,
+            artifact_store=resolved.artifact_store,
             observer=self._observer,
             clock=self._clock,
             confidence_threshold=self._confidence_threshold,

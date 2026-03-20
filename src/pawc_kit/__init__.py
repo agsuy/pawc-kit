@@ -67,16 +67,21 @@ from pawc_kit.llm.compressor import (
     PassthroughCompressor,
     SemanticCompressor,
 )
+from pawc_kit.adapters.fs.runtime import AsyncFsRuntimeBackend, FsRuntimeBackend
 from pawc_kit.llm.roles import AsyncLLMExecutorRole, AsyncLLMReviewerRole
 from pawc_kit.ports import (
     ArtifactStore,
     AsyncArtifactStore,
     AsyncClock,
+    AsyncResolvedBackend,
+    AsyncRuntimeBackend,
     AsyncStateStore,
     AsyncWorkflowObserver,
     Clock,
     ContextCompressor,
     PromptAssembler,
+    ResolvedBackend,
+    RuntimeBackend,
     StateStore,
     WorkflowObserver,
 )
@@ -177,13 +182,20 @@ __all__ = [
     "ArtifactStore",
     "AsyncArtifactStore",
     "AsyncClock",
+    "AsyncResolvedBackend",
+    "AsyncRuntimeBackend",
     "AsyncStateStore",
     "AsyncWorkflowObserver",
     "Clock",
     "ContextCompressor",
     "PromptAssembler",
+    "ResolvedBackend",
+    "RuntimeBackend",
     "StateStore",
     "WorkflowObserver",
+    # Runtime backend adapters
+    "AsyncFsRuntimeBackend",
+    "FsRuntimeBackend",
     # LLM backend
     "BackendCapabilities",
     # LLM compressors
