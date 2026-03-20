@@ -165,3 +165,68 @@ def test_async_engine_resume_emits_run_resumed() -> None:
     event_types = [type(e) for e in obs.events]
     assert event_types[0] is RunResumed, "first event on async resume must be RunResumed"
     assert PhaseStarted not in event_types[:1]
+
+
+# ---------------------------------------------------------------------------
+# run_metadata persistence and reload (async parity)
+# ---------------------------------------------------------------------------
+
+
+def test_async_engine_persists_run_metadata_when_provided() -> None:
+    """run_metadata supplied to the engine is written to state at start."""
+    ss = MemoryStateStore()
+    engine = AsyncWorkflowEngine(
+        make_simple_graph(),
+        AsyncMemoryStateStore(ss),
+        AsyncMemoryArtifactStore(MemoryArtifactStore()),
+        metadata={"model": "gpt-4"},
+    )
+    engine.register_role("worker-role", AsyncWorker())
+    engine.register_role("reviewer-role", AsyncReviewer())
+    asyncio.run(engine.run(session_id="s1", skill_name="skill", skill_version="1.0.0"))
+    assert ss._stored is not None
+    assert ss._stored.state.run_metadata == {"model": "gpt-4"}
+
+
+def test_async_engine_reloads_run_metadata_on_resume() -> None:
+    """On async resume, the engine restores self._metadata from the persisted state."""
+    from pawc_kit.contracts.state import SessionState
+    from pawc_kit.ports.state import StoredSession
+    from pawc_kit.workflow.roles import ExecutionResult
+
+    captured: list[ExecutionRequest] = []
+
+    class CapturingAsyncWorker:
+        async def execute(self, req: ExecutionRequest) -> ExecutionResult:
+            captured.append(req)
+            return ExecutionResult(
+                role_id=req.phase.role_id,
+                ended_at=utc_now(),
+                confidence_score=90,
+                summary="done",
+            )
+
+    ss = MemoryStateStore()
+    in_progress_state = SessionState(
+        session_id="s1",
+        skill_name="skill",
+        skill_version="1.0.0",
+        current_phase="work",
+        status="in_progress",
+        started_at="2026-01-01T00:00:00Z",
+        run_metadata={"key": "persisted"},
+    )
+    ss._stored = StoredSession(state=in_progress_state, revision=1)
+
+    engine = AsyncWorkflowEngine(
+        make_simple_graph(),
+        AsyncMemoryStateStore(ss),
+        AsyncMemoryArtifactStore(MemoryArtifactStore()),
+        metadata={"key": "constructor-value"},
+    )
+    engine.register_role("worker-role", CapturingAsyncWorker())
+    engine.register_role("reviewer-role", AsyncReviewer())
+    asyncio.run(engine.run(session_id="s1", skill_name="skill", skill_version="1.0.0"))
+
+    assert len(captured) == 1
+    assert captured[0].metadata == {"key": "persisted"}

@@ -324,3 +324,86 @@ def test_engine_resume_emits_run_resumed_not_phase_started() -> None:
     event_types = [type(e) for e in obs.events]
     assert event_types[0] is RunResumed, "first event on resume must be RunResumed"
     assert PhaseStarted not in event_types[:1]
+
+
+# ---------------------------------------------------------------------------
+# run_metadata persistence and reload
+# ---------------------------------------------------------------------------
+
+
+def test_engine_persists_run_metadata_in_state() -> None:
+    """run_metadata is written to state when the run transitions to in_progress."""
+    engine, ss, _, _ = _engine_with_recording()
+    engine.register_role("worker-role", MinimalWorker())
+    engine.register_role("reviewer-role", MinimalReviewer())
+    engine.run(
+        session_id="s1",
+        skill_name="skill",
+        skill_version="1.0.0",
+    )
+    assert ss._stored is not None
+    assert ss._stored.state.run_metadata is None
+
+
+def test_engine_persists_run_metadata_when_provided() -> None:
+    """run_metadata supplied to the engine is written to state at start."""
+    ss = MemoryStateStore()
+    as_ = MemoryArtifactStore()
+    engine = WorkflowEngine(
+        make_simple_graph(),
+        ss,
+        as_,
+        metadata={"model": "gpt-4", "temp": 0.5},
+    )
+    engine.register_role("worker-role", MinimalWorker())
+    engine.register_role("reviewer-role", MinimalReviewer())
+    engine.run(session_id="s1", skill_name="skill", skill_version="1.0.0")
+    assert ss._stored is not None
+    assert ss._stored.state.run_metadata == {"model": "gpt-4", "temp": 0.5}
+
+
+def test_engine_reloads_run_metadata_on_resume() -> None:
+    """On resume, the engine restores self._metadata from the persisted state."""
+    from pawc_kit.contracts.state import SessionState
+    from pawc_kit.ports.state import StoredSession
+    from pawc_kit.workflow.roles import ExecutionResult
+
+    captured: list[ExecutionRequest] = []
+
+    class CapturingWorker:
+        def execute(self, req: ExecutionRequest) -> ExecutionResult:
+            captured.append(req)
+            from pawc_kit._time import utc_now
+
+            return ExecutionResult(
+                role_id=req.phase.role_id,
+                ended_at=utc_now(),
+                confidence_score=90,
+                summary="done",
+            )
+
+    ss = MemoryStateStore()
+    as_ = MemoryArtifactStore()
+    in_progress_state = SessionState(
+        session_id="s1",
+        skill_name="skill",
+        skill_version="1.0.0",
+        current_phase="work",
+        status="in_progress",
+        started_at="2026-01-01T00:00:00Z",
+        run_metadata={"key": "persisted"},
+    )
+    ss._stored = StoredSession(state=in_progress_state, revision=1)
+
+    engine = WorkflowEngine(
+        make_simple_graph(),
+        ss,
+        as_,
+        metadata={"key": "constructor-value"},
+    )
+    engine.register_role("worker-role", CapturingWorker())
+    engine.register_role("reviewer-role", MinimalReviewer())
+    engine.run(session_id="s1", skill_name="skill", skill_version="1.0.0")
+
+    assert len(captured) == 1
+    assert captured[0].metadata == {"key": "persisted"}

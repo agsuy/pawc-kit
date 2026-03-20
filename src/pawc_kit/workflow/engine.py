@@ -279,6 +279,7 @@ class WorkflowEngine:
                         occurred_at=self._clock.now(),
                     )
                 )
+                self._metadata = runtime.state.run_metadata
 
             while runtime.state.status == "in_progress":
                 phase = self._graph.get(runtime.state.current_phase)
@@ -333,7 +334,12 @@ class WorkflowEngine:
             self._observer.on_event(event)
 
     def _start_run(self, runtime: _SyncRuntime) -> None:
-        state = runtime.state.model_copy(update={"status": "in_progress"})
+        state = runtime.state.model_copy(
+            update={
+                "status": "in_progress",
+                "run_metadata": (dict(self._metadata) if self._metadata is not None else None),
+            }
+        )
         self._save(runtime, state)
         self._emit(
             RunStarted(
@@ -704,6 +710,7 @@ class AsyncWorkflowEngine:
                         occurred_at=await self._clock.now(),
                     )
                 )
+                self._metadata = runtime.state.run_metadata
 
             while runtime.state.status == "in_progress":
                 phase = self._graph.get(runtime.state.current_phase)
@@ -760,7 +767,12 @@ class AsyncWorkflowEngine:
             await self._observer.on_event(event)
 
     async def _start_run(self, runtime: _AsyncRuntime) -> None:
-        state = runtime.state.model_copy(update={"status": "in_progress"})
+        state = runtime.state.model_copy(
+            update={
+                "status": "in_progress",
+                "run_metadata": (dict(self._metadata) if self._metadata is not None else None),
+            }
+        )
         await self._save(runtime, state)
         now = await self._clock.now()
         await self._emit(
