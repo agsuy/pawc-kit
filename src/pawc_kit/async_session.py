@@ -37,7 +37,8 @@ class AsyncWorkflowSession:
     - When ``backend`` is provided, it is used as-is.  The ``run_directory`` and
       ``state_filename`` kwargs are ignored and a :class:`UserWarning` is emitted
       if either was also supplied.
-    - When ``backend`` is omitted (``None``), an :class:`~pawc_kit.adapters.fs.runtime.AsyncFsRuntimeBackend`
+    - When ``backend`` is omitted (``None``), an
+      :class:`~pawc_kit.adapters.fs.runtime.AsyncFsRuntimeBackend`
       is built from ``config.state_directory``, ``run_directory``, and ``state_filename``.
     """
 
@@ -108,7 +109,8 @@ class AsyncWorkflowSession:
         # --- Backend resolution -----------------------------------------------
         if backend is not None and (run_directory is not None or state_filename is not None):
             warnings.warn(
-                "run_directory and state_filename are ignored when an explicit backend is provided.",
+                "run_directory and state_filename are ignored "
+                "when an explicit backend is provided.",
                 UserWarning,
                 stacklevel=2,
             )

@@ -12,7 +12,6 @@ from pawc_kit.contracts.errors import StateNotFoundError
 from pawc_kit.ports.runtime import AsyncRuntimeBackend, RuntimeBackend
 from pawc_kit.ports.state import SessionMetadata
 
-
 # ---------------------------------------------------------------------------
 # Protocol conformance (isinstance via runtime_checkable)
 # ---------------------------------------------------------------------------
