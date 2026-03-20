@@ -132,6 +132,10 @@ def load_discovery_handoff(pack_path: Path) -> HandoffContext | None:
         envelope = HandoffArtifact.model_validate_json(handoff_path.read_text(encoding="utf-8"))
     except Exception as exc:
         raise ConfigurationError(f"Malformed handoff-context.json in {pack_path}: {exc}") from exc
+    if not envelope.parts:
+        raise ConfigurationError(
+            f"handoff-context.json in {pack_path}: envelope has no parts (expected exactly one)"
+        )
     return envelope.parts[0].body
 
 
@@ -331,8 +335,14 @@ def validate_pack(
                 envelope = HandoffArtifact.model_validate_json(
                     handoff_path.read_text(encoding="utf-8")
                 )
-                ref_errors = validate_handoff_refs(pack_path, envelope.parts[0].body)
-                errors.extend(ref_errors)
+                if not envelope.parts:
+                    errors.append(
+                        "discovery/handoff-context.json: envelope has no parts "
+                        "(expected exactly one)"
+                    )
+                else:
+                    ref_errors = validate_handoff_refs(pack_path, envelope.parts[0].body)
+                    errors.extend(ref_errors)
             except Exception as exc:
                 errors.append(f"discovery/handoff-context.json is malformed: {exc}")
 
