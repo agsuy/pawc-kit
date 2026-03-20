@@ -13,6 +13,7 @@ from pawc_kit._time import utc_now
 from pawc_kit.async_session import AsyncWorkflowSession
 from pawc_kit.contracts import RootConfig, SkillConfig
 from pawc_kit.contracts.errors import StateNotFoundError
+from pawc_kit.contracts.execution import ExecutionRequest
 from pawc_kit.contracts.state import SessionState
 from pawc_kit.ports.runtime import (
     AsyncResolvedBackend,
@@ -20,7 +21,7 @@ from pawc_kit.ports.runtime import (
 )
 from pawc_kit.ports.state import SessionMetadata, StoredSession
 from pawc_kit.session import WorkflowSession
-from pawc_kit.workflow.roles import ExecutionContext, ExecutionResult
+from pawc_kit.workflow.roles import ExecutionResult
 
 # ---------------------------------------------------------------------------
 # In-memory state/artifact stores used by the custom backend doubles
@@ -273,11 +274,11 @@ def test_async_session_delegates_to_custom_backend() -> None:
     spy = _SpyAsyncRuntimeBackend()
 
     class _MinimalAsyncWorker:
-        async def execute(self, ctx: ExecutionContext) -> ExecutionResult:
+        async def execute(self, req: ExecutionRequest) -> ExecutionResult:
             from pawc_kit.contracts.artifacts import HandoffContext
 
             return ExecutionResult(
-                role_id=ctx.phase.role_id,
+                role_id=req.phase.role_id,
                 ended_at=utc_now(),
                 confidence_score=90,
                 summary="done",

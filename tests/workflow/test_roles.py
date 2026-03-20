@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pawc_kit._time import utc_now
 from pawc_kit.context import ContextPack
+from pawc_kit.contracts.execution import ExecutionRequest, ReviewRequest
 from pawc_kit.contracts.state import SessionState
 from pawc_kit.ports.artifacts import ArtifactReader
 from pawc_kit.workflow.graph import PhaseDefinition
@@ -126,9 +127,9 @@ def test_review_context_with_targets() -> None:
 
 
 class _ConcreteExecutor:
-    def execute(self, ctx: ExecutionContext) -> ExecutionResult:
+    def execute(self, req: ExecutionRequest) -> ExecutionResult:
         return ExecutionResult(
-            role_id=ctx.phase.role_id,
+            role_id=req.phase.role_id,
             ended_at=utc_now(),
             confidence_score=90,
             summary="done",
@@ -136,9 +137,9 @@ class _ConcreteExecutor:
 
 
 class _ConcreteReviewer:
-    def review(self, ctx: ReviewContext) -> ReviewResult:
+    def review(self, req: ReviewRequest) -> ReviewResult:
         return ReviewResult(
-            role_id=ctx.phase.role_id,
+            role_id=req.phase.role_id,
             ended_at=utc_now(),
             decision=ReviewDecision(
                 decision="APPROVE", confidence_score=88, counts_verified=True, summary="ok"
@@ -147,9 +148,9 @@ class _ConcreteReviewer:
 
 
 class _AsyncConcreteExecutor:
-    async def execute(self, ctx: ExecutionContext) -> ExecutionResult:
+    async def execute(self, req: ExecutionRequest) -> ExecutionResult:
         return ExecutionResult(
-            role_id=ctx.phase.role_id,
+            role_id=req.phase.role_id,
             ended_at=utc_now(),
             confidence_score=90,
             summary="done",
@@ -157,9 +158,9 @@ class _AsyncConcreteExecutor:
 
 
 class _AsyncConcreteReviewer:
-    async def review(self, ctx: ReviewContext) -> ReviewResult:
+    async def review(self, req: ReviewRequest) -> ReviewResult:
         return ReviewResult(
-            role_id=ctx.phase.role_id,
+            role_id=req.phase.role_id,
             ended_at=utc_now(),
             decision=ReviewDecision(
                 decision="APPROVE", confidence_score=88, counts_verified=True, summary="ok"

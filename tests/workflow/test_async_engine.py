@@ -16,11 +16,10 @@ from pawc_kit.contracts.events import (
     RunResumed,
     RunStarted,
 )
+from pawc_kit.contracts.execution import ExecutionRequest, ReviewRequest
 from pawc_kit.workflow import AsyncWorkflowEngine
 from pawc_kit.workflow.roles import (
-    ExecutionContext,
     ExecutionResult,
-    ReviewContext,
     ReviewDecision,
     ReviewResult,
 )
@@ -34,9 +33,9 @@ from tests.workflow.conftest import (
 
 
 class AsyncWorker:
-    async def execute(self, ctx: ExecutionContext) -> ExecutionResult:
+    async def execute(self, req: ExecutionRequest) -> ExecutionResult:
         return ExecutionResult(
-            role_id=ctx.phase.role_id,
+            role_id=req.phase.role_id,
             ended_at=utc_now(),
             confidence_score=90,
             summary="done",
@@ -52,11 +51,11 @@ class AsyncReviewer:
         self._count = 0
         self._target = target_phase
 
-    async def review(self, ctx: ReviewContext) -> ReviewResult:
+    async def review(self, req: ReviewRequest) -> ReviewResult:
         d = self._decisions[self._count % len(self._decisions)]
         self._count += 1
         return ReviewResult(
-            role_id=ctx.phase.role_id,
+            role_id=req.phase.role_id,
             ended_at=utc_now(),
             decision=ReviewDecision(
                 decision=d,  # type: ignore[arg-type]

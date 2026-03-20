@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from pawc_kit.context import ContextPack
 from pawc_kit.contracts.config import EfficiencyConfig, RoleConfig
+from pawc_kit.contracts.execution import ContextPayload, ExecutionRequest
 from pawc_kit.contracts.state import IterationEntry, ReviewEntry
 from pawc_kit.llm.prompts import (
     DefaultPromptAssembler,
@@ -16,8 +16,8 @@ from pawc_kit.llm.prompts import (
 )
 from pawc_kit.llm.roles import ExecutorOutput
 from pawc_kit.workflow.graph import PhaseDefinition
-from pawc_kit.workflow.roles import ExecutionContext, WorkflowHistoryView
-from tests.llm.conftest import NullArtifactReader, make_exec_ctx, make_review_ctx, make_session
+from pawc_kit.workflow.roles import WorkflowHistoryView
+from tests.llm.conftest import make_exec_ctx, make_review_ctx, make_session
 
 # ---------------------------------------------------------------------------
 # context_section
@@ -46,12 +46,11 @@ def test_context_section_with_iterations_full_verbosity() -> None:
         ended_at="2026-01-01T00:00:00Z",
         summary="partial",
     )
-    ctx = ExecutionContext(
+    ctx = ExecutionRequest(
         session=make_session(),
         phase=PhaseDefinition(phase_id="work", role_id="worker-role", kind="executor"),
         history=WorkflowHistoryView(iterations=[iteration], reviews=[]),
-        artifacts=NullArtifactReader(),
-        context=ContextPack.empty(),
+        context=ContextPayload.empty(),
     )
     eff = EfficiencyConfig(prompt_verbosity="full", phase_filter=False)
     section = context_section(ctx, eff)
@@ -68,12 +67,11 @@ def test_context_section_json_verbosity() -> None:
         ended_at="2026-01-01T00:00:00Z",
         summary="x",
     )
-    ctx = ExecutionContext(
+    ctx = ExecutionRequest(
         session=make_session(),
         phase=PhaseDefinition(phase_id="work", role_id="worker-role", kind="executor"),
         history=WorkflowHistoryView(iterations=[iteration], reviews=[]),
-        artifacts=NullArtifactReader(),
-        context=ContextPack.empty(),
+        context=ContextPayload.empty(),
     )
     eff = EfficiencyConfig(prompt_verbosity="json", phase_filter=False)
     section = context_section(ctx, eff)
@@ -90,12 +88,11 @@ def test_context_section_jsonl_verbosity() -> None:
         ended_at="2026-01-01T00:00:00Z",
         summary="x",
     )
-    ctx = ExecutionContext(
+    ctx = ExecutionRequest(
         session=make_session(),
         phase=PhaseDefinition(phase_id="work", role_id="worker-role", kind="executor"),
         history=WorkflowHistoryView(iterations=[iteration], reviews=[]),
-        artifacts=NullArtifactReader(),
-        context=ContextPack.empty(),
+        context=ContextPayload.empty(),
     )
     eff = EfficiencyConfig(prompt_verbosity="jsonl", phase_filter=False)
     section = context_section(ctx, eff)
@@ -136,14 +133,13 @@ def test_context_section_phase_filter_excludes_unrelated() -> None:
         ended_at="2026-01-01T01:00:00Z",
         summary="work-summary",
     )
-    ctx = ExecutionContext(
+    ctx = ExecutionRequest(
         session=make_session(),
         phase=PhaseDefinition(phase_id="work", role_id="worker-role", kind="executor"),
         history=WorkflowHistoryView(
             iterations=[early_unrelated, preceding_iter, work_iter], reviews=[]
         ),
-        artifacts=NullArtifactReader(),
-        context=ContextPack.empty(),
+        context=ContextPayload.empty(),
     )
     eff = EfficiencyConfig(prompt_verbosity="full", phase_filter=True)
     section = context_section(ctx, eff)
@@ -192,15 +188,14 @@ def test_context_section_phase_filter_uses_timestamp_not_container_order() -> No
         ended_at="2026-01-01T00:30:00Z",
         summary="work-iter-2",
     )
-    ctx = ExecutionContext(
+    ctx = ExecutionRequest(
         session=make_session(),
         phase=PhaseDefinition(phase_id="work", role_id="worker-role", kind="executor"),
         history=WorkflowHistoryView(
             iterations=[work_iter_1, work_iter_2],
             reviews=[review_entry],
         ),
-        artifacts=NullArtifactReader(),
-        context=ContextPack.empty(),
+        context=ContextPayload.empty(),
     )
     eff = EfficiencyConfig(prompt_verbosity="full", phase_filter=True)
     section = context_section(ctx, eff)
@@ -225,12 +220,11 @@ def test_context_section_windowing_shows_only_recent() -> None:
         )
         for i in range(1, 6)
     ]
-    ctx = ExecutionContext(
+    ctx = ExecutionRequest(
         session=make_session(),
         phase=PhaseDefinition(phase_id="work", role_id="worker-role", kind="executor"),
         history=WorkflowHistoryView(iterations=iterations, reviews=[]),
-        artifacts=NullArtifactReader(),
-        context=ContextPack.empty(),
+        context=ContextPayload.empty(),
     )
     eff = EfficiencyConfig(prompt_verbosity="full", context_window=2, phase_filter=False)
     section = context_section(ctx, eff)

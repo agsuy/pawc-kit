@@ -15,12 +15,11 @@ from pawc_kit.contracts.events import (
     RunResumed,
     RunStarted,
 )
+from pawc_kit.contracts.execution import ExecutionRequest, ReviewRequest
 from pawc_kit.workflow import WorkflowEngine
 from pawc_kit.workflow.graph import PhaseDefinition, PhaseGraph
 from pawc_kit.workflow.roles import (
-    ExecutionContext,
     ExecutionResult,
-    ReviewContext,
     ReviewDecision,
     ReviewResult,
 )
@@ -190,7 +189,7 @@ def test_engine_rejects_mixed_kind_binding() -> None:
 
 def test_engine_rejects_role_id_mismatch() -> None:
     class BadWorker:
-        def execute(self, ctx: ExecutionContext) -> ExecutionResult:
+        def execute(self, req: ExecutionRequest) -> ExecutionResult:
             from pawc_kit._time import utc_now
 
             return ExecutionResult(
@@ -206,9 +205,9 @@ def test_engine_rejects_role_id_mismatch() -> None:
 
 def test_engine_rejects_invalid_ended_at() -> None:
     class BadReviewer:
-        def review(self, ctx: ReviewContext) -> ReviewResult:
+        def review(self, req: ReviewRequest) -> ReviewResult:
             return ReviewResult(
-                role_id=ctx.phase.role_id,
+                role_id=req.phase.role_id,
                 ended_at="not-a-timestamp",
                 decision=ReviewDecision(
                     decision="APPROVE", confidence_score=88, counts_verified=True, summary="ok"

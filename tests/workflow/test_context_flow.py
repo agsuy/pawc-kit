@@ -9,12 +9,11 @@ import pytest
 from pawc_kit.context import ContextPack
 from pawc_kit.contracts.context import ContextMetadata
 from pawc_kit.contracts.errors import ConfigurationError
+from pawc_kit.contracts.execution import ContextPayload, ExecutionRequest, ReviewRequest
 from pawc_kit.workflow.engine import WorkflowEngine
 from pawc_kit.workflow.graph import PhaseDefinition, PhaseGraph
 from pawc_kit.workflow.roles import (
-    ExecutionContext,
     ExecutionResult,
-    ReviewContext,
     ReviewDecision,
     ReviewResult,
 )
@@ -38,17 +37,17 @@ def _make_pack(
 
 
 class ContextCapturingWorker:
-    """Executor that captures the context it receives."""
+    """Executor that captures the context payload it receives."""
 
     def __init__(self) -> None:
-        self.received_context: ContextPack | None = None
+        self.received_context: ContextPayload | None = None
 
-    def execute(self, ctx: ExecutionContext) -> ExecutionResult:
+    def execute(self, req: ExecutionRequest) -> ExecutionResult:
         from pawc_kit._time import utc_now
 
-        self.received_context = ctx.context
+        self.received_context = req.context
         return ExecutionResult(
-            role_id=ctx.phase.role_id,
+            role_id=req.phase.role_id,
             ended_at=utc_now(),
             confidence_score=90,
             summary="done",
@@ -56,17 +55,17 @@ class ContextCapturingWorker:
 
 
 class ContextCapturingReviewer:
-    """Reviewer that captures the context it receives."""
+    """Reviewer that captures the context payload it receives."""
 
     def __init__(self) -> None:
-        self.received_context: ContextPack | None = None
+        self.received_context: ContextPayload | None = None
 
-    def review(self, ctx: ReviewContext) -> ReviewResult:
+    def review(self, req: ReviewRequest) -> ReviewResult:
         from pawc_kit._time import utc_now
 
-        self.received_context = ctx.context
+        self.received_context = req.context
         return ReviewResult(
-            role_id=ctx.phase.role_id,
+            role_id=req.phase.role_id,
             ended_at=utc_now(),
             decision=ReviewDecision(
                 decision="APPROVE",
@@ -114,7 +113,7 @@ def test_context_pack_reaches_executor_role() -> None:
     )
 
     assert worker.received_context is not None
-    assert worker.received_context.metadata.context_id == "spec-123"
+    assert worker.received_context.context_id == "spec-123"
     assert "prompt.md" in worker.received_context.request_files
 
 
@@ -137,7 +136,7 @@ def test_context_pack_reaches_reviewer_role() -> None:
     )
 
     assert reviewer.received_context is not None
-    assert reviewer.received_context.metadata.context_id == "spec-456"
+    assert reviewer.received_context.context_id == "spec-456"
 
 
 def test_empty_pack_used_when_no_context_pack_supplied() -> None:
@@ -202,7 +201,7 @@ def test_context_sources_filters_children_for_phase() -> None:
 
     worker_ctx = worker.received_context
     assert worker_ctx is not None
-    child_ids = [c.metadata.context_id for c in worker_ctx.children]
+    child_ids = [c.context_id for c in worker_ctx.children]
     assert "child-a" in child_ids
     assert "child-b" not in child_ids
 
@@ -245,7 +244,7 @@ def test_context_sources_none_includes_all_children() -> None:
 
     worker_ctx = worker.received_context
     assert worker_ctx is not None
-    child_ids = [c.metadata.context_id for c in worker_ctx.children]
+    child_ids = [c.context_id for c in worker_ctx.children]
     assert "child-a" in child_ids
     assert "child-b" in child_ids
 
