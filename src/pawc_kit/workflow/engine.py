@@ -25,6 +25,7 @@ from pawc_kit.contracts.execution import ContextPayload, ExecutionRequest, Revie
 from pawc_kit.contracts.state import IterationEntry, ReviewEntry, SessionState
 from pawc_kit.ports.artifacts import ArtifactStore, AsyncArtifactStore
 from pawc_kit.ports.clock import AsyncClock, Clock
+from pawc_kit.ports.controller import RunController, RunSignal
 from pawc_kit.ports.invoker import AsyncRoleInvoker, RoleInvoker
 from pawc_kit.ports.observers import AsyncWorkflowObserver, WorkflowObserver
 from pawc_kit.ports.state import AsyncStateStore, SessionMetadata, StateStore, StoredSession
@@ -206,6 +207,24 @@ def _validate_role_output(
         )
 
 
+class _StopRequested(Exception):
+    """Internal sentinel raised to break out of the run loop on pause.
+
+    Never propagated to callers — caught by the inner try/except in ``run()``
+    before the outer ``except Exception`` handler that emits ``RunFailed``.
+    State is left ``in_progress`` (resumable) when this is raised.
+    """
+
+
+class _CancelRequested(_StopRequested):
+    """Internal sentinel raised to break out of the run loop on cancel.
+
+    Subclass of ``_StopRequested`` so a single ``except _StopRequested``
+    in the sync engine catches both.  The async engine catches it separately
+    first to call ``await _finalize`` before the generic stop handling.
+    """
+
+
 class WorkflowEngine:
     """Sync workflow engine using in-memory state with step-level durable flushes."""
 
@@ -223,6 +242,7 @@ class WorkflowEngine:
         confidence_floor: int | None = None,
         metadata: Mapping[str, Any] | None = None,
         invoker: RoleInvoker | None = None,
+        controller: RunController | None = None,
     ) -> None:
         self._graph = graph
         self._state_store = state_store
@@ -241,6 +261,12 @@ class WorkflowEngine:
             from pawc_kit.adapters.local_invoker import LocalRoleInvoker
 
             self._invoker = LocalRoleInvoker()
+        if controller is not None:
+            self._controller: RunController = controller
+        else:
+            from pawc_kit.adapters.always_continue import AlwaysContinue
+
+            self._controller = AlwaysContinue()
 
     def register_role(self, role_id: str, role: Executor | Reviewer) -> None:
         from pawc_kit.adapters.local_invoker import LocalRoleInvoker
@@ -296,12 +322,15 @@ class WorkflowEngine:
                 )
                 self._metadata = runtime.state.run_metadata
 
-            while runtime.state.status == "in_progress":
-                phase = self._graph.get(runtime.state.current_phase)
-                if phase.kind == "executor":
-                    self._run_executor(runtime, phase)
-                else:
-                    self._run_review(runtime, phase)
+            try:
+                while runtime.state.status == "in_progress":
+                    phase = self._graph.get(runtime.state.current_phase)
+                    if phase.kind == "executor":
+                        self._run_executor(runtime, phase)
+                    else:
+                        self._run_review(runtime, phase)
+            except _StopRequested:
+                pass
 
             return runtime.state
         except Exception as exc:
@@ -330,6 +359,22 @@ class WorkflowEngine:
     def _emit(self, event: WorkflowEvent) -> None:
         if self._observer is not None:
             self._observer.on_event(event)
+
+    def _check_signal(self, runtime: _SyncRuntime) -> None:
+        """Check the run controller and raise if the run should stop.
+
+        Called at every commit boundary (top of executor ``while True`` and
+        after ``ReviewCommitted``).  On ``CANCEL`` the run is finalized as
+        ``abandoned`` before raising so the state is terminal.  On ``PAUSE``
+        the state is left ``in_progress`` (resumable).
+        """
+        signal = self._controller.check()
+        if signal is RunSignal.CONTINUE:
+            return
+        if signal is RunSignal.CANCEL:
+            self._finalize(runtime, completed=False)
+            raise _CancelRequested()
+        raise _StopRequested()
 
     def _start_run(self, runtime: _SyncRuntime) -> None:
         state = runtime.state.model_copy(
@@ -452,6 +497,7 @@ class WorkflowEngine:
         last_result: ExecutionResult | None = None
 
         while True:
+            self._check_signal(runtime)
             started_at = self._clock.now()
             result = self._invoker.invoke_executor(self._build_execution_request(runtime, phase))
             last_result = result
@@ -610,6 +656,7 @@ class WorkflowEngine:
                 findings_ref=decision_ref.ref,
             )
         )
+        self._check_signal(runtime)
 
         if payload.decision == "REQUEST_CHANGES":
             if runtime.state.feedback_loops >= self._max_feedback_rounds:
@@ -639,6 +686,7 @@ class AsyncWorkflowEngine:
         confidence_floor: int | None = None,
         metadata: Mapping[str, Any] | None = None,
         invoker: AsyncRoleInvoker | None = None,
+        controller: RunController | None = None,
     ) -> None:
         self._graph = graph
         self._state_store = state_store
@@ -657,6 +705,12 @@ class AsyncWorkflowEngine:
             from pawc_kit.adapters.local_invoker import AsyncLocalRoleInvoker
 
             self._invoker = AsyncLocalRoleInvoker()
+        if controller is not None:
+            self._controller: RunController = controller
+        else:
+            from pawc_kit.adapters.always_continue import AlwaysContinue
+
+            self._controller = AlwaysContinue()
 
     def register_role(self, role_id: str, role: AsyncExecutor | AsyncReviewer) -> None:
         from pawc_kit.adapters.local_invoker import AsyncLocalRoleInvoker
@@ -712,12 +766,17 @@ class AsyncWorkflowEngine:
                 )
                 self._metadata = runtime.state.run_metadata
 
-            while runtime.state.status == "in_progress":
-                phase = self._graph.get(runtime.state.current_phase)
-                if phase.kind == "executor":
-                    await self._run_executor(runtime, phase)
-                else:
-                    await self._run_review(runtime, phase)
+            try:
+                while runtime.state.status == "in_progress":
+                    phase = self._graph.get(runtime.state.current_phase)
+                    if phase.kind == "executor":
+                        await self._run_executor(runtime, phase)
+                    else:
+                        await self._run_review(runtime, phase)
+            except _CancelRequested:
+                await self._finalize(runtime, completed=False)
+            except _StopRequested:
+                pass
 
             return runtime.state
         except Exception as exc:
@@ -748,6 +807,21 @@ class AsyncWorkflowEngine:
     async def _emit(self, event: WorkflowEvent) -> None:
         if self._observer is not None:
             await self._observer.on_event(event)
+
+    def _check_signal(self, runtime: _AsyncRuntime) -> None:
+        """Check the run controller and raise ``_StopRequested`` if needed.
+
+        Intentionally sync — ``RunController.check()`` is a lightweight flag
+        read.  Called at every commit boundary inside the async engine.
+        On ``CANCEL`` raises ``_CancelRequested`` so the async inner handler
+        can call ``await _finalize`` before silently absorbing the stop.
+        """
+        signal = self._controller.check()
+        if signal is RunSignal.CONTINUE:
+            return
+        if signal is RunSignal.CANCEL:
+            raise _CancelRequested()
+        raise _StopRequested()
 
     async def _start_run(self, runtime: _AsyncRuntime) -> None:
         state = runtime.state.model_copy(
@@ -875,6 +949,7 @@ class AsyncWorkflowEngine:
         last_result: ExecutionResult | None = None
 
         while True:
+            self._check_signal(runtime)
             started_at = await self._clock.now()
             result = await self._invoker.invoke_executor(
                 await self._build_execution_request(runtime, phase)
@@ -1037,6 +1112,7 @@ class AsyncWorkflowEngine:
                 findings_ref=decision_ref.ref,
             )
         )
+        self._check_signal(runtime)
 
         if payload.decision == "REQUEST_CHANGES":
             if runtime.state.feedback_loops >= self._max_feedback_rounds:

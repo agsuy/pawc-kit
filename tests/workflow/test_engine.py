@@ -407,3 +407,111 @@ def test_engine_reloads_run_metadata_on_resume() -> None:
 
     assert len(captured) == 1
     assert captured[0].metadata == {"key": "persisted"}
+
+
+# ---------------------------------------------------------------------------
+# RunController: pause and cancel
+# ---------------------------------------------------------------------------
+
+
+def _engine_with_controller(
+    controller: object,
+) -> tuple[WorkflowEngine, MemoryStateStore, MemoryArtifactStore, RecordingObserver]:
+    ss = MemoryStateStore()
+    as_ = MemoryArtifactStore()
+    obs = RecordingObserver(ss)
+    engine = WorkflowEngine(
+        make_simple_graph(),
+        ss,
+        as_,
+        observer=obs,
+        controller=controller,  # type: ignore[arg-type]
+    )
+    return engine, ss, as_, obs
+
+
+def test_engine_pauses_on_pause_signal() -> None:
+    """Engine returns in_progress on PAUSE; no RunCompleted event is emitted."""
+    from pawc_kit.ports.controller import RunSignal
+
+    class ImmediatePause:
+        def check(self) -> RunSignal:
+            return RunSignal.PAUSE
+
+    engine, _, _, obs = _engine_with_controller(ImmediatePause())
+    engine.register_role("worker-role", MinimalWorker())
+    engine.register_role("reviewer-role", MinimalReviewer())
+    state = engine.run(session_id="s1", skill_name="skill", skill_version="1.0.0")
+    assert state.status == "in_progress"
+    assert state.completed_at is None
+    run_completed_events = [e for e in obs.events if isinstance(e, RunCompleted)]
+    assert run_completed_events == []
+
+
+def test_engine_cancels_on_cancel_signal() -> None:
+    """Engine returns abandoned on CANCEL; RunCompleted event has status=abandoned."""
+    from pawc_kit.ports.controller import RunSignal
+
+    class CancelAfterFirstIteration:
+        def __init__(self) -> None:
+            self._calls = 0
+
+        def check(self) -> RunSignal:
+            self._calls += 1
+            return RunSignal.CANCEL if self._calls >= 1 else RunSignal.CONTINUE
+
+    engine, _, _, obs = _engine_with_controller(CancelAfterFirstIteration())
+    engine.register_role("worker-role", MinimalWorker())
+    engine.register_role("reviewer-role", MinimalReviewer())
+    state = engine.run(session_id="s1", skill_name="skill", skill_version="1.0.0")
+    assert state.status == "abandoned"
+    assert state.completed_at is not None
+    run_completed_events = [e for e in obs.events if isinstance(e, RunCompleted)]
+    assert len(run_completed_events) == 1
+    assert run_completed_events[0].status == "abandoned"
+
+
+def test_engine_default_controller_runs_normally() -> None:
+    """No controller kwarg: engine completes normally via AlwaysContinue default."""
+    ss = MemoryStateStore()
+    as_ = MemoryArtifactStore()
+    engine = WorkflowEngine(make_simple_graph(), ss, as_)
+    engine.register_role("worker-role", MinimalWorker())
+    engine.register_role("reviewer-role", MinimalReviewer())
+    state = engine.run(session_id="s1", skill_name="skill", skill_version="1.0.0")
+    assert state.status == "completed"
+
+
+def test_engine_cancel_does_not_emit_run_failed() -> None:
+    """Cancel finalizes cleanly — no RunFailed event."""
+    from pawc_kit.contracts.events import RunFailed
+    from pawc_kit.ports.controller import RunSignal
+
+    class ImmediateCancel:
+        def check(self) -> RunSignal:
+            return RunSignal.CANCEL
+
+    _, _, _, obs = _engine_with_controller(ImmediateCancel())
+    engine, _, _, obs = _engine_with_controller(ImmediateCancel())
+    engine.register_role("worker-role", MinimalWorker())
+    engine.register_role("reviewer-role", MinimalReviewer())
+    engine.run(session_id="s1", skill_name="skill", skill_version="1.0.0")
+    run_failed_events = [e for e in obs.events if isinstance(e, RunFailed)]
+    assert run_failed_events == []
+
+
+def test_engine_pause_does_not_emit_run_failed() -> None:
+    """Pause returns cleanly — no RunFailed event."""
+    from pawc_kit.contracts.events import RunFailed
+    from pawc_kit.ports.controller import RunSignal
+
+    class ImmediatePause:
+        def check(self) -> RunSignal:
+            return RunSignal.PAUSE
+
+    engine, _, _, obs = _engine_with_controller(ImmediatePause())
+    engine.register_role("worker-role", MinimalWorker())
+    engine.register_role("reviewer-role", MinimalReviewer())
+    engine.run(session_id="s1", skill_name="skill", skill_version="1.0.0")
+    run_failed_events = [e for e in obs.events if isinstance(e, RunFailed)]
+    assert run_failed_events == []

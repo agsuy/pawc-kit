@@ -230,3 +230,92 @@ def test_async_engine_reloads_run_metadata_on_resume() -> None:
 
     assert len(captured) == 1
     assert captured[0].metadata == {"key": "persisted"}
+
+
+# ---------------------------------------------------------------------------
+# RunController: pause and cancel (async)
+# ---------------------------------------------------------------------------
+
+
+def _async_engine_with_controller(
+    controller: object,
+) -> tuple[
+    AsyncWorkflowEngine, AsyncMemoryStateStore, AsyncMemoryArtifactStore, AsyncRecordingObserver
+]:
+    sync_ss = MemoryStateStore()
+    ss = AsyncMemoryStateStore(sync_ss)
+    as_ = AsyncMemoryArtifactStore(MemoryArtifactStore())
+    obs = AsyncRecordingObserver(sync_ss)
+    engine = AsyncWorkflowEngine(
+        make_simple_graph(),
+        ss,
+        as_,
+        observer=obs,
+        controller=controller,  # type: ignore[arg-type]
+    )
+    return engine, ss, as_, obs
+
+
+def test_async_engine_pauses_on_pause_signal() -> None:
+    """Async engine returns in_progress on PAUSE."""
+    from pawc_kit.ports.controller import RunSignal
+
+    class ImmediatePause:
+        def check(self) -> RunSignal:
+            return RunSignal.PAUSE
+
+    engine, _, _, obs = _async_engine_with_controller(ImmediatePause())
+    engine.register_role("worker-role", AsyncWorker())
+    engine.register_role("reviewer-role", AsyncReviewer())
+    state = asyncio.run(engine.run(session_id="s1", skill_name="skill", skill_version="1.0.0"))
+    assert state.status == "in_progress"
+    assert state.completed_at is None
+    run_completed_events = [e for e in obs.events if isinstance(e, RunCompleted)]
+    assert run_completed_events == []
+
+
+def test_async_engine_cancels_on_cancel_signal() -> None:
+    """Async engine returns abandoned on CANCEL."""
+    from pawc_kit.ports.controller import RunSignal
+
+    class ImmediateCancel:
+        def check(self) -> RunSignal:
+            return RunSignal.CANCEL
+
+    engine, _, _, obs = _async_engine_with_controller(ImmediateCancel())
+    engine.register_role("worker-role", AsyncWorker())
+    engine.register_role("reviewer-role", AsyncReviewer())
+    state = asyncio.run(engine.run(session_id="s1", skill_name="skill", skill_version="1.0.0"))
+    assert state.status == "abandoned"
+    assert state.completed_at is not None
+    run_completed_events = [e for e in obs.events if isinstance(e, RunCompleted)]
+    assert len(run_completed_events) == 1
+    assert run_completed_events[0].status == "abandoned"
+
+
+def test_async_engine_cancel_does_not_emit_run_failed() -> None:
+    """Async cancel finalizes cleanly — no RunFailed event."""
+    from pawc_kit.contracts.events import RunFailed
+    from pawc_kit.ports.controller import RunSignal
+
+    class ImmediateCancel:
+        def check(self) -> RunSignal:
+            return RunSignal.CANCEL
+
+    engine, _, _, obs = _async_engine_with_controller(ImmediateCancel())
+    engine.register_role("worker-role", AsyncWorker())
+    engine.register_role("reviewer-role", AsyncReviewer())
+    asyncio.run(engine.run(session_id="s1", skill_name="skill", skill_version="1.0.0"))
+    assert [e for e in obs.events if isinstance(e, RunFailed)] == []
+
+
+def test_async_engine_default_controller_runs_normally() -> None:
+    """No controller kwarg: async engine completes normally via AlwaysContinue."""
+    sync_ss = MemoryStateStore()
+    ss = AsyncMemoryStateStore(sync_ss)
+    as_ = AsyncMemoryArtifactStore(MemoryArtifactStore())
+    engine = AsyncWorkflowEngine(make_simple_graph(), ss, as_)
+    engine.register_role("worker-role", AsyncWorker())
+    engine.register_role("reviewer-role", AsyncReviewer())
+    state = asyncio.run(engine.run(session_id="s1", skill_name="skill", skill_version="1.0.0"))
+    assert state.status == "completed"
