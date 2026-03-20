@@ -2,6 +2,142 @@
 
 <!-- version list -->
 
+## v0.3.0 (2026-03-20)
+
+### Bug Fixes
+
+- **ci**: Avoid duplicate pull request runs ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **ci**: Reset dev to main after release instead of merging
+  ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **ci**: Trigger dev sync via workflow_run to avoid skip ci
+  ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **context**: Guard empty handoff envelopes ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **core**: Tighten typing and domain errors ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **scripts**: Improve PR helper and release actions
+  ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **scripts**: Reuse commit subject as PR title when only one commit
+  ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **scripts**: Skip closed PRs when checking for existing release PR
+  ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+### Chores
+
+- **ci**: Add release and validation workflows ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **ci**: Auto-sync dev after release and add gitattributes
+  ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **hooks**: Add pre-commit lint-check hook ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **packaging**: Add PyPI metadata ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **packaging**: Adopt PEP 639 license metadata ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **scripts**: Add open-release-pr helper ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **tooling**: Add editor defaults and ignore local workspace files
+  ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+### Documentation
+
+- **contributing**: Add contribution license notice ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **ports**: Clarify observer as emit-only boundary ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **repo**: Document release and versioning flow ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+### Features
+
+- **contracts**: Add execution DTO types ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **contracts**: Add run_metadata field to SessionState
+  ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **otel**: Add tracing support to workflow observer
+  ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **ports**: Add RoleInvoker and AsyncRoleInvoker protocols
+  ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **ports**: Add RunSignal enum and RunController protocol
+  ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **ports**: Add RuntimeBackend protocol and FsRuntimeBackend adapter
+  ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **session**: Accept optional RuntimeBackend in session orchestrators
+  ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **session**: Expose controller kwarg and update exports
+  ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **workflow**: Check RunController at commit boundaries
+  ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **workflow**: Dispatch role calls through RoleInvoker
+  ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **workflow**: Persist and reload run_metadata across resume
+  ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **workflow**: Switch role protocols and engine to execution DTOs
+  ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+### Refactoring
+
+- **core**: Split utility helpers and semver validation
+  ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+### Testing
+
+- Update all tests for execution DTO signatures ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **api**: Tighten root export assertion ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+- **session**: Add custom-backend injection tests ([#3](https://github.com/agsuy/pawc-kit/pull/3),
+  [`e4d778e`](https://github.com/agsuy/pawc-kit/commit/e4d778e925e2f41ce9aea165ac22f693babac158))
+
+
 ## v0.2.0 (2026-03-20)
 
 ### Bug Fixes
