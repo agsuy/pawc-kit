@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Mapping
 
-from pawc_kit._util import utc_now
+from pawc_kit._time import utc_now
 from pawc_kit.context import ContextPack, accessible_packs
 from pawc_kit.contracts.artifacts import DecisionPayload
 from pawc_kit.contracts.errors import ConfigurationError, StateNotFoundError, TransitionError
@@ -19,6 +19,7 @@ from pawc_kit.contracts.events import (
     RunFailed,
     RunResumed,
     RunStarted,
+    WorkflowEvent,
 )
 from pawc_kit.contracts.state import IterationEntry, ReviewEntry, SessionState
 from pawc_kit.ports.artifacts import ArtifactStore, AsyncArtifactStore
@@ -313,7 +314,7 @@ class WorkflowEngine:
     def _save(self, runtime: _SyncRuntime, state: SessionState) -> None:
         runtime.stored = self._state_store.save(state, expected_revision=runtime.stored.revision)
 
-    def _emit(self, event) -> None:
+    def _emit(self, event: WorkflowEvent) -> None:
         if self._observer is not None:
             self._observer.on_event(event)
 
@@ -742,7 +743,7 @@ class AsyncWorkflowEngine:
             state, expected_revision=runtime.stored.revision
         )
 
-    async def _emit(self, event) -> None:
+    async def _emit(self, event: WorkflowEvent) -> None:
         if self._observer is not None:
             await self._observer.on_event(event)
 

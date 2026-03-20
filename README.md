@@ -22,12 +22,21 @@ Using `uv`:
 uv sync --dev
 ```
 
+Core dependencies include [**semver**](https://pypi.org/project/semver/) for SemVer 2.0 validation of skill/role and session version fields.
+
 Optional extras:
 
 - **OpenTelemetry** — metrics and tracing: `uv sync --dev --extra otel` or `pip install -e .[otel]`
 - **Semantic compression** — [semantic-text-splitter](https://github.com/benbrandt/text-splitter) for chunk-based prompt compression: `uv sync --dev --extra semantic` or `pip install -e .[semantic]`
 
-Requires Python 3.11+.
+Requires Python 3.12+.
+
+## Releases
+
+The repo includes [python-semantic-release](https://python-semantic-release.readthedocs.io/)
+configuration for SemVer bumps, [`CHANGELOG.md`](CHANGELOG.md), and `v*`
+release tags based on conventional commits (see
+[`CONTRIBUTING.md`](CONTRIBUTING.md)).
 
 ## Quick Start (config-driven)
 
@@ -63,6 +72,7 @@ workflow:
 observability:
   observer: otel           # "otel" | "logging" | "none" (default: none)
   meter_name: pawc_kit.workflow   # for otel; ignored when observer != "otel"
+  tracer_name: pawc_kit.workflow   # for otel; ignored when observer != "otel"
   logger_name: pawc_kit.workflow  # for logging; ignored when observer != "logging"
 ```
 
@@ -256,13 +266,25 @@ Default logging adapter level mapping:
 
 ### OpenTelemetry adapter
 
-Requires `pawc-kit[otel]`. Handles all 8 workflow event types:
+Requires `pawc-kit[otel]`. Handles all 8 workflow event types with **metrics** (counters and histograms) and **traces** (nested spans).
 
 ```python
 from pawc_kit.adapters.otel import OpenTelemetryWorkflowObserver
 
-observer = OpenTelemetryWorkflowObserver(meter_name="pawc_kit.workflow")
+observer = OpenTelemetryWorkflowObserver(
+    meter_name="pawc_kit.workflow",
+    tracer_name="pawc_kit.workflow",
+)
 ```
+
+Span hierarchy (parent → child): **run** → **phase** → **iteration** / **review**.
+
+| Span name | Created on | Ended on | Typical attributes |
+|---|---|---|---|
+| `pawc.workflow.run` | `RunStarted`, `RunResumed` | `RunCompleted`, `RunFailed` | `session_id`, `phase_id`, `resumed`, `skill_name` (when `RunStarted`); on completion: `run.status`, `run.feedback_loops` or `error.type` / `error.message` |
+| `pawc.workflow.phase` | `PhaseStarted` | `PhaseTransitioned`, run end | `session_id`, `phase_id`, `role_id`, `phase_kind` |
+| `pawc.workflow.iteration` | `IterationCommitted` | same event (duration from event timestamps) | `session_id`, `phase_id`, `iteration`, `confidence_score` |
+| `pawc.workflow.review` | `ReviewCommitted` | same event (duration from event timestamps) | `session_id`, `phase_id`, `review`, `decision`, `confidence_score` |
 
 Metrics emitted:
 
@@ -281,7 +303,10 @@ Metrics emitted:
 
 Design notes:
 
-- low-cardinality attributes only; `session_id` is never included in metric labels
+- **Metrics:** low-cardinality attributes only; `session_id` is never included in metric labels.
+- **Traces:** `session_id` is included on spans (expected for request-scoped traces and distinct from the metrics policy).
+- **Threading:** the observer assumes single-threaded event delivery per session (same model as the default filesystem stores); span state is not locked.
+- **Defensive behavior:** if events arrive without a parent span (e.g. `PhaseStarted` before `RunStarted`), child spans are still recorded as roots; duplicate `RunStarted` for the same session ends the previous run span before opening a new one.
 - `AsyncOpenTelemetryWorkflowObserver` delegates to the sync observer (OTEL SDK calls are CPU-bound)
 
 ## Architecture

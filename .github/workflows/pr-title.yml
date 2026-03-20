@@ -1,0 +1,26 @@
+name: PR Title
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - synchronize
+    branches:
+      - dev
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate-title:
+    name: validate conventional commit format
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate PR title
+        run: |
+          python scripts/validate_commit_msg.py --message "${{ github.event.pull_request.title }}"

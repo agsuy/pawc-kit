@@ -97,6 +97,7 @@ from pawc_kit.workflow import (
     Reviewer,
     ReviewResult,
     WorkflowEngine,
+    WorkflowHistoryView,
 )
 
 __version__ = "0.1.0"
@@ -205,4 +206,5 @@ __all__ = [
     "ReviewResult",
     "Reviewer",
     "WorkflowEngine",
+    "WorkflowHistoryView",
 ]

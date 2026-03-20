@@ -16,8 +16,9 @@ the corresponding kwargs explicitly -- the override always wins.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
+from pawc_kit._sentinel import UNSET, UnsetType
 from pawc_kit.adapters.factory import build_sync_observer
 from pawc_kit.adapters.fs.artifact_store import FsArtifactStore
 from pawc_kit.adapters.fs.state_store import FsStateStore
@@ -32,8 +33,6 @@ from pawc_kit.ports.observers import WorkflowObserver
 from pawc_kit.workflow.engine import WorkflowEngine
 from pawc_kit.workflow.graph import PhaseGraph
 from pawc_kit.workflow.roles import Executor, Reviewer
-
-_UNSET: int = object()  # type: ignore[assignment]
 
 
 class WorkflowSession:
@@ -76,12 +75,12 @@ class WorkflowSession:
         graph: PhaseGraph | None = None,
         run_directory: str | None = None,
         state_filename: str | None = None,
-        observer: WorkflowObserver | None = _UNSET,  # type: ignore[assignment]
+        observer: WorkflowObserver | None | UnsetType = UNSET,
         clock: Clock | None = None,
         confidence_threshold: int | None = None,
         max_iterations: int | None = None,
         max_feedback_rounds: int | None = None,
-        confidence_floor: int | None = _UNSET,  # type: ignore[assignment]
+        confidence_floor: int | None | UnsetType = UNSET,
         metadata: Mapping[str, Any] | None = None,
     ) -> WorkflowSession:
         """Load ``config.yaml`` from disk and return a ready session.
@@ -112,16 +111,18 @@ class WorkflowSession:
         graph: PhaseGraph | None = None,
         run_directory: str | None = None,
         state_filename: str | None = None,
-        observer: WorkflowObserver | None = _UNSET,  # type: ignore[assignment]
+        observer: WorkflowObserver | None | UnsetType = UNSET,
         clock: Clock | None = None,
         confidence_threshold: int | None = None,
         max_iterations: int | None = None,
         max_feedback_rounds: int | None = None,
-        confidence_floor: int | None = _UNSET,  # type: ignore[assignment]
+        confidence_floor: int | None | UnsetType = UNSET,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
         self._config = config
         wf = config.workflow
+        self._confidence_floor: int | None
+        self._observer: WorkflowObserver | None
 
         # --- Graph resolution -------------------------------------------------
         if graph is not None:
@@ -145,19 +146,18 @@ class WorkflowSession:
         self._max_feedback_rounds = (
             max_feedback_rounds if max_feedback_rounds is not None else wf.max_feedback_rounds
         )
-        # confidence_floor: None is a valid value (disabled). A module-level sentinel
-        # distinguishes "caller omitted the kwarg" (falls back to config) from
-        # "caller explicitly passed None" (disables the floor even if config has a value).
-        self._confidence_floor = (
-            wf.confidence_floor if confidence_floor is _UNSET else confidence_floor
-        )
+        # confidence_floor: None is a valid value (disabled). UNSET means "use config".
+        if confidence_floor is UNSET:
+            self._confidence_floor = wf.confidence_floor
+        else:
+            self._confidence_floor = cast(int | None, confidence_floor)
 
-        # observer: _UNSET -> auto-construct from config.observability;
-        #           None   -> no observer (suppresses any config-driven one);
-        #           instance -> use it directly.
-        self._observer: WorkflowObserver | None = (
-            build_sync_observer(config.observability) if observer is _UNSET else observer
-        )
+        # observer: UNSET -> auto-construct from config.observability;
+        #           None   -> no observer; instance -> use it directly.
+        if observer is UNSET:
+            self._observer = build_sync_observer(config.observability)
+        else:
+            self._observer = cast(WorkflowObserver | None, observer)
         self._clock = clock
         self._metadata = metadata
         self._role_bindings: dict[str, Executor | Reviewer] = {}

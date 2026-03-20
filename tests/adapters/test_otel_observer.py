@@ -7,6 +7,13 @@ import asyncio
 import pytest
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
+from opentelemetry.sdk.trace.export import (
+    SimpleSpanProcessor,
+    SpanExporter,
+    SpanExportResult,
+)
+from opentelemetry.trace import StatusCode
 
 from pawc_kit.adapters.otel import (
     AsyncOpenTelemetryWorkflowObserver,
@@ -23,6 +30,21 @@ from pawc_kit.contracts.events import (
     RunStarted,
 )
 
+
+class _CapturingSpanExporter(SpanExporter):
+    """Collect finished spans for tests (replaces removed InMemorySpanExporter)."""
+
+    def __init__(self) -> None:
+        self.finished: list[ReadableSpan] = []
+
+    def export(self, spans):  # type: ignore[no-untyped-def]
+        self.finished.extend(spans)
+        return SpanExportResult.SUCCESS
+
+    def shutdown(self) -> None:
+        pass
+
+
 TS = "2026-01-01T00:00:00Z"
 TS_START = "2026-01-01T00:00:00Z"
 TS_END = "2026-01-01T00:00:02Z"
@@ -35,13 +57,19 @@ TS_FRAC_END = "2026-01-01T00:00:01.500000Z"
 # ---------------------------------------------------------------------------
 
 
-def _make_observer() -> tuple[OpenTelemetryWorkflowObserver, InMemoryMetricReader]:
+def _make_observer() -> tuple[
+    OpenTelemetryWorkflowObserver, InMemoryMetricReader, _CapturingSpanExporter
+]:
     reader = InMemoryMetricReader()
-    provider = MeterProvider(metric_readers=[reader])
-    obs = OpenTelemetryWorkflowObserver.__new__(OpenTelemetryWorkflowObserver)
-    # Wire the observer to use our test MeterProvider instead of the global one.
+    meter_provider = MeterProvider(metric_readers=[reader])
+    span_exporter = _CapturingSpanExporter()
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(SimpleSpanProcessor(span_exporter))
 
-    meter = provider.get_meter("pawc_kit.workflow")
+    obs = OpenTelemetryWorkflowObserver.__new__(OpenTelemetryWorkflowObserver)
+    # Wire the observer to use our test MeterProvider and TracerProvider (not globals).
+
+    meter = meter_provider.get_meter("pawc_kit.workflow")
     obs._runs = meter.create_counter("pawc.workflow.runs")
     obs._failures = meter.create_counter("pawc.workflow.run_failures")
     obs._iterations = meter.create_counter("pawc.workflow.iterations")
@@ -52,7 +80,13 @@ def _make_observer() -> tuple[OpenTelemetryWorkflowObserver, InMemoryMetricReade
     obs._run_duration = meter.create_histogram("pawc.workflow.run.duration.seconds")
     obs._iteration_duration = meter.create_histogram("pawc.workflow.iteration.duration.seconds")
     obs._review_duration = meter.create_histogram("pawc.workflow.review.duration.seconds")
-    return obs, reader
+    obs._tracer = tracer_provider.get_tracer("pawc_kit.workflow")
+    obs._active_spans = {}
+    return obs, reader, span_exporter
+
+
+def _finished(exporter: _CapturingSpanExporter) -> list[ReadableSpan]:
+    return list(exporter.finished)
 
 
 def _collect(reader: InMemoryMetricReader) -> dict[str, object]:
@@ -201,7 +235,7 @@ def _run_failed() -> RunFailed:
 
 
 def test_run_started_increments_runs_counter() -> None:
-    obs, reader = _make_observer()
+    obs, reader, _ = _make_observer()
     obs.on_event(_run_started())
     data = _collect(reader)
     assert "pawc.workflow.runs" in data
@@ -212,7 +246,7 @@ def test_run_started_increments_runs_counter() -> None:
 
 
 def test_run_completed_increments_runs_counter_and_records_duration() -> None:
-    obs, reader = _make_observer()
+    obs, reader, _ = _make_observer()
     obs.on_event(_run_completed("completed"))
     data = _collect(reader)
     assert _sum_counter(data["pawc.workflow.runs"]) == 1
@@ -224,7 +258,7 @@ def test_run_completed_increments_runs_counter_and_records_duration() -> None:
 
 
 def test_run_failed_increments_failures_counter() -> None:
-    obs, reader = _make_observer()
+    obs, reader, _ = _make_observer()
     obs.on_event(_run_failed())
     data = _collect(reader)
     assert "pawc.workflow.run_failures" in data
@@ -234,7 +268,7 @@ def test_run_failed_increments_failures_counter() -> None:
 
 
 def test_run_failed_unknown_phase_uses_fallback_attribute() -> None:
-    obs, reader = _make_observer()
+    obs, reader, _ = _make_observer()
     event = RunFailed(
         session_id="s1",
         phase_id=None,
@@ -251,7 +285,7 @@ def test_run_failed_unknown_phase_uses_fallback_attribute() -> None:
 
 
 def test_iteration_committed_increments_iterations_and_records_duration() -> None:
-    obs, reader = _make_observer()
+    obs, reader, _ = _make_observer()
     obs.on_event(_iteration_committed())
     data = _collect(reader)
     assert "pawc.workflow.iterations" in data
@@ -264,7 +298,7 @@ def test_iteration_committed_increments_iterations_and_records_duration() -> Non
 
 
 def test_review_committed_approve_increments_reviews_counter() -> None:
-    obs, reader = _make_observer()
+    obs, reader, _ = _make_observer()
     obs.on_event(_review_committed("APPROVE"))
     data = _collect(reader)
     assert "pawc.workflow.reviews" in data
@@ -274,7 +308,7 @@ def test_review_committed_approve_increments_reviews_counter() -> None:
 
 
 def test_review_committed_request_changes_records_outcome() -> None:
-    obs, reader = _make_observer()
+    obs, reader, _ = _make_observer()
     obs.on_event(_review_committed("REQUEST_CHANGES"))
     data = _collect(reader)
     attrs = _attrs(data["pawc.workflow.reviews"])
@@ -282,7 +316,7 @@ def test_review_committed_request_changes_records_outcome() -> None:
 
 
 def test_review_committed_records_duration() -> None:
-    obs, reader = _make_observer()
+    obs, reader, _ = _make_observer()
     obs.on_event(_review_committed())
     data = _collect(reader)
     assert "pawc.workflow.review.duration.seconds" in data
@@ -290,7 +324,7 @@ def test_review_committed_records_duration() -> None:
 
 
 def test_phase_started_increments_phases_counter() -> None:
-    obs, reader = _make_observer()
+    obs, reader, _ = _make_observer()
     obs.on_event(_phase_started("executor"))
     data = _collect(reader)
     assert "pawc.workflow.phases" in data
@@ -300,7 +334,7 @@ def test_phase_started_increments_phases_counter() -> None:
 
 
 def test_phase_transitioned_increments_transitions_counter() -> None:
-    obs, reader = _make_observer()
+    obs, reader, _ = _make_observer()
     obs.on_event(_phase_transitioned())
     data = _collect(reader)
     assert "pawc.workflow.transitions" in data
@@ -310,7 +344,7 @@ def test_phase_transitioned_increments_transitions_counter() -> None:
 
 
 def test_run_resumed_increments_resumes_counter() -> None:
-    obs, reader = _make_observer()
+    obs, reader, _ = _make_observer()
     obs.on_event(_run_resumed())
     data = _collect(reader)
     assert "pawc.workflow.resumes" in data
@@ -325,7 +359,7 @@ def test_run_resumed_increments_resumes_counter() -> None:
 
 
 def test_fractional_second_timestamps_parse_correctly() -> None:
-    obs, reader = _make_observer()
+    obs, reader, _ = _make_observer()
     obs.on_event(_iteration_committed(start=TS_FRAC_START, end=TS_FRAC_END))
     data = _collect(reader)
     assert _histogram_sums(data["pawc.workflow.iteration.duration.seconds"])[0] == pytest.approx(
@@ -361,7 +395,7 @@ def test_meter_name_kwarg_is_honoured() -> None:
 
 
 def test_async_observer_delegates_to_sync() -> None:
-    obs, reader = _make_observer()
+    obs, reader, _ = _make_observer()
     async_obs = AsyncOpenTelemetryWorkflowObserver.__new__(AsyncOpenTelemetryWorkflowObserver)
     async_obs._delegate = obs
 
@@ -372,7 +406,7 @@ def test_async_observer_delegates_to_sync() -> None:
 
 
 def test_async_observer_handles_all_event_types() -> None:
-    obs, reader = _make_observer()
+    obs, reader, _ = _make_observer()
     async_obs = AsyncOpenTelemetryWorkflowObserver.__new__(AsyncOpenTelemetryWorkflowObserver)
     async_obs._delegate = obs
 
@@ -401,3 +435,165 @@ def test_async_observer_handles_all_event_types() -> None:
     assert _sum_counter(data["pawc.workflow.reviews"]) == 1
     assert _sum_counter(data["pawc.workflow.transitions"]) == 1
     assert _sum_counter(data["pawc.workflow.run_failures"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Tracing (spans)
+# ---------------------------------------------------------------------------
+
+
+def test_run_span_ended_on_run_completed_with_ok_status() -> None:
+    obs, _, exporter = _make_observer()
+    obs.on_event(_run_started())
+    obs.on_event(_run_completed("completed"))
+    spans = _finished(exporter)
+    run_spans = [s for s in spans if s.name == "pawc.workflow.run"]
+    assert len(run_spans) == 1
+    assert run_spans[0].status.status_code == StatusCode.OK
+    attrs = dict(run_spans[0].attributes)
+    assert attrs.get("session_id") == "s1"
+    assert attrs.get("skill_name") == "skill"
+    assert attrs.get("resumed") is False
+    assert attrs.get("run.status") == "completed"
+    assert attrs.get("run.feedback_loops") == 0
+
+
+def test_run_span_ended_on_run_failed_with_error_status() -> None:
+    obs, _, exporter = _make_observer()
+    obs.on_event(_run_started())
+    obs.on_event(_run_failed())
+    spans = _finished(exporter)
+    run_spans = [s for s in spans if s.name == "pawc.workflow.run"]
+    assert len(run_spans) == 1
+    assert run_spans[0].status.status_code == StatusCode.ERROR
+    attrs = dict(run_spans[0].attributes)
+    assert attrs.get("error.type") == "ValueError"
+    assert attrs.get("error.message") == "boom"
+
+
+def test_phase_span_parent_is_run_span() -> None:
+    obs, _, exporter = _make_observer()
+    obs.on_event(_run_started())
+    obs.on_event(_phase_started())
+    obs.on_event(_phase_transitioned())
+    obs.on_event(_run_completed())
+    spans = _finished(exporter)
+    run_span = next(s for s in spans if s.name == "pawc.workflow.run")
+    phase_span = next(s for s in spans if s.name == "pawc.workflow.phase")
+    assert phase_span.parent.span_id == run_span.context.span_id
+
+
+def test_iteration_span_parent_is_phase_span_and_uses_event_timestamps() -> None:
+    obs, _, exporter = _make_observer()
+    obs.on_event(_run_started())
+    obs.on_event(_phase_started())
+    obs.on_event(_iteration_committed())
+    obs.on_event(_run_completed())
+    spans = _finished(exporter)
+    phase_span = next(s for s in spans if s.name == "pawc.workflow.phase")
+    iter_span = next(s for s in spans if s.name == "pawc.workflow.iteration")
+    assert iter_span.parent.span_id == phase_span.context.span_id
+    attrs = dict(iter_span.attributes)
+    assert attrs.get("iteration") == 1
+    assert attrs.get("confidence_score") == 85
+    assert attrs.get("session_id") == "s1"
+    assert iter_span.start_time is not None and iter_span.end_time is not None
+    expected_duration_ns = 2 * 1_000_000_000
+    assert iter_span.end_time - iter_span.start_time == expected_duration_ns
+
+
+def test_review_span_parent_is_phase_span() -> None:
+    obs, _, exporter = _make_observer()
+    obs.on_event(_run_started())
+    obs.on_event(_phase_started("review"))
+    obs.on_event(_review_committed("APPROVE"))
+    obs.on_event(_run_completed())
+    spans = _finished(exporter)
+    phase_span = next(s for s in spans if s.name == "pawc.workflow.phase")
+    review_span = next(s for s in spans if s.name == "pawc.workflow.review")
+    assert review_span.parent.span_id == phase_span.context.span_id
+    attrs = dict(review_span.attributes)
+    assert attrs.get("decision") == "APPROVE"
+    assert attrs.get("review") == 1
+
+
+def test_resumed_run_span_has_resumed_attribute() -> None:
+    obs, _, exporter = _make_observer()
+    obs.on_event(_run_resumed())
+    obs.on_event(_run_completed())
+    spans = _finished(exporter)
+    run_spans = [s for s in spans if s.name == "pawc.workflow.run"]
+    assert len(run_spans) == 1
+    attrs = dict(run_spans[0].attributes)
+    assert attrs.get("resumed") is True
+    assert "skill_name" not in attrs
+
+
+def test_missing_run_span_phase_started_still_exports_phase_span() -> None:
+    obs, _, exporter = _make_observer()
+    obs.on_event(_phase_started())
+    obs.on_event(_phase_transitioned())
+    spans = _finished(exporter)
+    phase_spans = [s for s in spans if s.name == "pawc.workflow.phase"]
+    assert len(phase_spans) == 1
+    parent = phase_spans[0].parent
+    assert parent is None or not parent.is_valid
+
+
+def test_concurrent_sessions_independent_traces() -> None:
+    obs, _, exporter = _make_observer()
+
+    def flow(sid: str) -> None:
+        obs.on_event(
+            RunStarted(
+                session_id=sid,
+                skill_name="sk",
+                phase_id="work",
+                role_id="w",
+                revision=0,
+                occurred_at=TS,
+            )
+        )
+        obs.on_event(
+            RunCompleted(
+                session_id=sid,
+                status="completed",
+                feedback_loops=0,
+                revision=1,
+                started_at=TS_START,
+                completed_at=TS_END,
+            )
+        )
+
+    flow("s-a")
+    flow("s-b")
+    spans = _finished(exporter)
+    runs = [s for s in spans if s.name == "pawc.workflow.run"]
+    assert len(runs) == 2
+    by_session = {dict(s.attributes).get("session_id"): s for s in runs}
+    assert set(by_session) == {"s-a", "s-b"}
+
+
+def test_duplicate_run_started_ends_previous_run_span() -> None:
+    obs, _, exporter = _make_observer()
+    obs.on_event(_run_started())
+    obs.on_event(
+        RunStarted(
+            session_id="s1",
+            skill_name="skill2",
+            phase_id="work",
+            role_id="worker",
+            revision=1,
+            occurred_at=TS,
+        )
+    )
+    obs.on_event(_run_completed())
+    spans = _finished(exporter)
+    runs = [s for s in spans if s.name == "pawc.workflow.run"]
+    assert len(runs) == 2
+    ended_without_status = [s for s in runs if s.status.status_code == StatusCode.UNSET]
+    assert len(ended_without_status) == 1
+    ok_runs = [
+        s for s in spans if s.name == "pawc.workflow.run" and s.status.status_code == StatusCode.OK
+    ]
+    assert len(ok_runs) == 1

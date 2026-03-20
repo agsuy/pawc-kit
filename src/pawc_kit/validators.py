@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from pawc_kit._util import validate_no_version_in_id as validate_no_version_in_id  # re-export
-from pawc_kit._util import validate_semver as validate_semver  # re-export
+from pawc_kit._versioning import validate_no_version_in_id as validate_no_version_in_id  # re-export
+from pawc_kit._versioning import validate_semver as validate_semver  # re-export
 from pawc_kit.contracts.artifacts import FindingEntry
 from pawc_kit.contracts.context import ContextMetadata
 

@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from pawc_kit._util import SEMVER_PATTERN
+from pawc_kit._versioning import SemVerStr
 
 
 class ObservabilityConfig(BaseModel):
@@ -27,6 +27,7 @@ class ObservabilityConfig(BaseModel):
 
     observer: Literal["otel", "logging", "none"] = "none"
     meter_name: str = "pawc_kit.workflow"
+    tracer_name: str = "pawc_kit.workflow"
     logger_name: str = "pawc_kit.workflow"
 
 
@@ -34,7 +35,7 @@ class SkillConfig(BaseModel):
     """Root config skill identity."""
 
     name: str
-    version: str = Field(..., pattern=SEMVER_PATTERN.pattern)
+    version: SemVerStr
     description: str = ""
 
 
@@ -181,7 +182,7 @@ class RoleConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     name: str
-    version: str = Field(..., pattern=SEMVER_PATTERN.pattern)
+    version: SemVerStr
     expertise: list[str] = Field(default_factory=list)
     focus: list[str] = Field(default_factory=list)
     guidelines: list[str] = Field(default_factory=list)

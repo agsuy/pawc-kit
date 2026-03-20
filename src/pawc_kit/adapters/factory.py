@@ -27,7 +27,10 @@ def build_sync_observer(config: ObservabilityConfig) -> WorkflowObserver | None:
                 "observability.observer is 'otel' but the 'otel' extra is not installed. "
                 "Run: pip install 'pawc-kit[otel]'"
             ) from exc
-        return OpenTelemetryWorkflowObserver(meter_name=config.meter_name)
+        return OpenTelemetryWorkflowObserver(
+            meter_name=config.meter_name,
+            tracer_name=config.tracer_name,
+        )
     raise ConfigurationError(  # pragma: no cover  -- exhaustive Literal guard
         f"Unknown observer type: {config.observer!r}"
     )
@@ -53,7 +56,10 @@ def build_async_observer(config: ObservabilityConfig) -> AsyncWorkflowObserver |
                 "observability.observer is 'otel' but the 'otel' extra is not installed. "
                 "Run: pip install 'pawc-kit[otel]'"
             ) from exc
-        return AsyncOpenTelemetryWorkflowObserver(meter_name=config.meter_name)
+        return AsyncOpenTelemetryWorkflowObserver(
+            meter_name=config.meter_name,
+            tracer_name=config.tracer_name,
+        )
     raise ConfigurationError(  # pragma: no cover  -- exhaustive Literal guard
         f"Unknown observer type: {config.observer!r}"
     )

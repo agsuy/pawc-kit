@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Literal, Mapping
 
 from pydantic import BaseModel, Field
 
-from pawc_kit._util import utc_now
+from pawc_kit._time import utc_now
 from pawc_kit.contracts import (
     ArtifactRef,
     ConfigurationError,
@@ -220,6 +220,7 @@ class LLMReviewerRole(Reviewer):
         decision = output.decision
         gate_override_reason: str | None = None
         if self._quality_gates and decision == "APPROVE":
+            # Config may supply int or str (e.g. from YAML); normalize to int.
             critical_allowed = int(str(self._quality_gates.get("critical_findings_allowed", 0)))
             high_allowed = int(str(self._quality_gates.get("high_findings_allowed", 1)))
             passed, reason = check_quality_gates(output.findings, critical_allowed, high_allowed)
@@ -349,6 +350,7 @@ class AsyncLLMReviewerRole(AsyncReviewer):
         decision = output.decision
         gate_override_reason: str | None = None
         if self._quality_gates and decision == "APPROVE":
+            # Config may supply int or str (e.g. from YAML); normalize to int.
             critical_allowed = int(str(self._quality_gates.get("critical_findings_allowed", 0)))
             high_allowed = int(str(self._quality_gates.get("high_findings_allowed", 1)))
             passed, reason = check_quality_gates(output.findings, critical_allowed, high_allowed)

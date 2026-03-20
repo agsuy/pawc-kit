@@ -53,7 +53,7 @@ class PhaseGraph:
         try:
             return self._by_id[phase_id]
         except KeyError as exc:
-            raise KeyError(f"Unknown phase: {phase_id}") from exc
+            raise ConfigurationError(f"Unknown phase: {phase_id}") from exc
 
     def phase_kind(self, phase_id: str) -> PhaseKind:
         return self.get(phase_id).kind
