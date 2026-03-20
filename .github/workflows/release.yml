@@ -1,0 +1,56 @@
+name: Release
+
+# Bumps version, updates CHANGELOG.md, tags v*, creates GitHub Release, and uploads wheels.
+# Release commits include [skip ci] so this workflow does not loop.
+# Requires Conventional Commits on main (prefer rebase merge from dev so PSR sees each commit).
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: semantic-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked --all-extras --dev
+
+      # Matches [project.authors] in pyproject.toml (PSR also uses commit_author there).
+      - name: Configure git for release commits
+        run: |
+          git config user.name "agsuy"
+          git config user.email "37564412+agsuy@users.noreply.github.com"
+
+      - name: Version, tag, and GitHub release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: uv run semantic-release version
+
+      - name: Upload distributions to GitHub Release
+        if: steps.release.outputs.released == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: uv run semantic-release publish --tag "${{ steps.release.outputs.tag }}"
