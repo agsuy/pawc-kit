@@ -1,6 +1,0 @@
-# PSR-owned files: auto-resolve merge conflicts in favour of the current branch
-# (dev keeps its version when merging main; PSR will overwrite on next release anyway)
-pyproject.toml              merge=ours
-uv.lock                     merge=ours
-CHANGELOG.md                merge=ours
-src/pawc_kit/__init__.py    merge=ours

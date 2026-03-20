@@ -1,14 +1,13 @@
 name: Sync dev after release
 
-# Merges main back into dev after the Release workflow completes.
-# Keeps dev up to date with PSR's version bumps, changelog, and uv.lock
-# so the next dev -> main PR has no PSR-owned file conflicts.
+# Resets dev to main after the Release workflow completes.
+#
+# Uses reset --hard instead of merge so that squash-merged commits do not
+# accumulate on dev across release cycles. Dev always starts the next cycle
+# from the exact released state.
 #
 # Triggered via workflow_run (not push) so [skip ci] on the PSR release
 # commit does not suppress this workflow.
-#
-# .gitattributes marks PSR-owned files with merge=ours so they
-# auto-resolve in favour of dev when the merge runs.
 
 on:
   workflow_run:
@@ -33,11 +32,9 @@ jobs:
         run: |
           git config user.name "agsuy"
           git config user.email "37564412+agsuy@users.noreply.github.com"
-          git config merge.ours.driver true
 
-      - name: Merge main into dev
-        run: |
-          git merge origin/main --no-edit
+      - name: Reset dev to main
+        run: git reset --hard origin/main
 
       - name: Push
-        run: git push origin dev
+        run: git push --force-with-lease origin dev
