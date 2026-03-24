@@ -134,6 +134,51 @@ def test_structured_output_last_usage_accumulates() -> None:
     assert so.last_usage.prompt_tokens == 100
 
 
+def test_structured_output_accumulate_preserves_model_fields() -> None:
+    backend = MockBackend()
+    usage = TokenUsage(
+        prompt_tokens=10,
+        completion_tokens=5,
+        total_tokens=15,
+        model="gpt-4o-2024-08-06",
+        model_requested="gpt-4o",
+    )
+    backend.queue(_Simple(name="ok", score=1).model_dump_json(), usage=usage)
+    so = StructuredOutput(backend, max_retries=0)
+    so.call("sys", "user", _Simple)
+    assert so.last_usage is not None
+    assert so.last_usage.model == "gpt-4o-2024-08-06"
+    assert so.last_usage.model_requested == "gpt-4o"
+
+
+def test_structured_output_accumulate_sums_tokens_across_retries() -> None:
+    backend = MockBackend()
+    u1 = TokenUsage(
+        prompt_tokens=10,
+        completion_tokens=5,
+        total_tokens=15,
+        model="gpt-4o-2024-08-06",
+        model_requested="gpt-4o",
+    )
+    u2 = TokenUsage(
+        prompt_tokens=20,
+        completion_tokens=8,
+        total_tokens=28,
+        model="gpt-4o-2024-08-06",
+        model_requested="gpt-4o",
+    )
+    backend.queue("bad", usage=u1)
+    backend.queue(_Simple(name="ok", score=1).model_dump_json(), usage=u2)
+    so = StructuredOutput(backend, max_retries=1)
+    so.call("sys", "user", _Simple)
+    assert so.last_usage is not None
+    assert so.last_usage.prompt_tokens == 30
+    assert so.last_usage.completion_tokens == 13
+    assert so.last_usage.total_tokens == 43
+    assert so.last_usage.model == "gpt-4o-2024-08-06"
+    assert so.last_usage.model_requested == "gpt-4o"
+
+
 def test_structured_output_logs_retry_warning(caplog: pytest.LogCaptureFixture) -> None:
     import logging
 

@@ -11,11 +11,18 @@ from pydantic import BaseModel
 
 @dataclass
 class TokenUsage:
-    """Token counts from a single LLM completion."""
+    """Token counts from a single LLM completion.
+
+    ``model`` is the resolved model name the API actually used (e.g.
+    ``gpt-4o-2024-08-06``).  ``model_requested`` is the alias the caller
+    configured (e.g. ``gpt-4o``).  Both are optional and set by the backend.
+    """
 
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    model: str | None = None
+    model_requested: str | None = None
 
 
 @dataclass

@@ -80,6 +80,10 @@ def _accumulate_usage(total: TokenUsage, result: CompletionResult) -> None:
         total.prompt_tokens += result.usage.prompt_tokens
         total.completion_tokens += result.usage.completion_tokens
         total.total_tokens += result.usage.total_tokens
+        if total.model is None:
+            total.model = result.usage.model
+        if total.model_requested is None:
+            total.model_requested = result.usage.model_requested
 
 
 class StructuredOutput:
