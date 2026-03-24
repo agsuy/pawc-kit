@@ -1,0 +1,41 @@
+name: Publish
+
+# Publishes to PyPI when a release tag (v*) is pushed (from python-semantic-release on main).
+# Requires PyPI Trusted Publishing: repo environment "pypi", workflow publish.yml.
+#
+# Manual fallback: workflow_dispatch (same build + publish steps).
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    name: build and publish to PyPI
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Build
+        run: uv build
+
+      - name: Smoke test (wheel)
+        run: uv run --isolated --no-project --with dist/*.whl python -c "import pawc_kit"
+
+      - name: Publish
+        run: uv publish
