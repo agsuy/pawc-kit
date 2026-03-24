@@ -45,6 +45,11 @@ class IterationCommitted:
     ended_at: str
     chosen_next: str | None
     handoff_context_ref: str | None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    model: str | None = None
+    model_requested: str | None = None
 
 
 @dataclass(frozen=True)
@@ -64,6 +69,23 @@ class ReviewCommitted:
     target_phase: str | None
     chosen_next: str | None
     findings_ref: str | None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    model: str | None = None
+    model_requested: str | None = None
+
+
+@dataclass(frozen=True)
+class HumanReviewPending:
+    """A human review phase was reached; engine paused awaiting external input."""
+
+    session_id: str
+    phase_id: str
+    role_id: str
+    review: int
+    revision: str | int
+    occurred_at: str
 
 
 @dataclass(frozen=True)
@@ -106,6 +128,9 @@ class RunCompleted:
     revision: str | int
     started_at: str
     completed_at: str
+    total_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
+    total_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -127,12 +152,14 @@ WorkflowEvent = (
     | PhaseStarted
     | IterationCommitted
     | ReviewCommitted
+    | HumanReviewPending
     | PhaseTransitioned
     | RunCompleted
     | RunFailed
 )
 
 __all__ = [
+    "HumanReviewPending",
     "IterationCommitted",
     "PhaseStarted",
     "PhaseTransitioned",

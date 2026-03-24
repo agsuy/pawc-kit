@@ -63,7 +63,7 @@ class ReviewEntry(BaseModel):
     review: int = Field(..., ge=1)
     phase_id: str
     role_id: str
-    decision: Literal["APPROVE", "REQUEST_CHANGES"] | None = None
+    decision: Literal["APPROVE", "REQUEST_CHANGES", "PENDING"] | None = None
     target_phase: str | None = None
     confidence_score: int | None = Field(None, ge=0, le=100)
     ended_at: str | None = None
