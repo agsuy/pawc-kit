@@ -80,6 +80,9 @@ def _make_observer() -> tuple[
     obs._run_duration = meter.create_histogram("pawc.workflow.run.duration.seconds")
     obs._iteration_duration = meter.create_histogram("pawc.workflow.iteration.duration.seconds")
     obs._review_duration = meter.create_histogram("pawc.workflow.review.duration.seconds")
+    obs._prompt_tokens = meter.create_counter("pawc.workflow.tokens.prompt")
+    obs._completion_tokens = meter.create_counter("pawc.workflow.tokens.completion")
+    obs._total_tokens = meter.create_counter("pawc.workflow.tokens.total")
     obs._tracer = tracer_provider.get_tracer("pawc_kit.workflow")
     obs._active_spans = {}
     return obs, reader, span_exporter
@@ -597,3 +600,116 @@ def test_duplicate_run_started_ends_previous_run_span() -> None:
         s for s in spans if s.name == "pawc.workflow.run" and s.status.status_code == StatusCode.OK
     ]
     assert len(ok_runs) == 1
+
+
+# ---------------------------------------------------------------------------
+# Token usage metrics and span attributes
+# ---------------------------------------------------------------------------
+
+
+def test_iteration_committed_with_tokens_records_counters() -> None:
+    obs, reader, _ = _make_observer()
+    obs.on_event(_run_started())
+    obs.on_event(_phase_started())
+    obs.on_event(
+        IterationCommitted(
+            session_id="s1",
+            phase_id="work",
+            role_id="worker",
+            iteration=1,
+            confidence_score=90,
+            feedback_loops=0,
+            revision=1,
+            started_at=TS_START,
+            ended_at=TS_END,
+            chosen_next=None,
+            handoff_context_ref=None,
+            prompt_tokens=100,
+            completion_tokens=50,
+            total_tokens=150,
+            model="gpt-4o-2024-08-06",
+            model_requested="gpt-4o",
+        )
+    )
+    metrics = _collect(reader)
+    assert "pawc.workflow.tokens.prompt" in metrics
+    assert _sum_counter(metrics["pawc.workflow.tokens.prompt"]) == 100
+    assert _sum_counter(metrics["pawc.workflow.tokens.completion"]) == 50
+    assert _sum_counter(metrics["pawc.workflow.tokens.total"]) == 150
+
+
+def test_review_committed_with_tokens_records_counters() -> None:
+    obs, reader, _ = _make_observer()
+    obs.on_event(_run_started())
+    obs.on_event(_phase_started())
+    obs.on_event(
+        ReviewCommitted(
+            session_id="s1",
+            phase_id="review",
+            role_id="reviewer",
+            review=1,
+            decision="APPROVE",
+            confidence_score=88,
+            feedback_loops=0,
+            revision=1,
+            started_at=TS_START,
+            ended_at=TS_END,
+            target_phase=None,
+            chosen_next=None,
+            findings_ref=None,
+            prompt_tokens=80,
+            completion_tokens=30,
+            total_tokens=110,
+            model="gpt-4o-2024-08-06",
+        )
+    )
+    metrics = _collect(reader)
+    assert _sum_counter(metrics["pawc.workflow.tokens.total"]) == 110
+
+
+def test_run_completed_span_includes_total_token_attributes() -> None:
+    obs, _, exporter = _make_observer()
+    obs.on_event(_run_started())
+    obs.on_event(
+        RunCompleted(
+            session_id="s1",
+            status="completed",
+            feedback_loops=0,
+            revision=1,
+            started_at=TS_START,
+            completed_at=TS_END,
+            total_prompt_tokens=180,
+            total_completion_tokens=80,
+            total_tokens=260,
+        )
+    )
+    spans = _finished(exporter)
+    run_spans = [s for s in spans if s.name == "pawc.workflow.run"]
+    assert len(run_spans) == 1
+    attrs = dict(run_spans[0].attributes)
+    assert attrs["run.total_prompt_tokens"] == 180
+    assert attrs["run.total_completion_tokens"] == 80
+    assert attrs["run.total_tokens"] == 260
+
+
+def test_iteration_without_tokens_does_not_record_counters() -> None:
+    obs, reader, _ = _make_observer()
+    obs.on_event(_run_started())
+    obs.on_event(_phase_started())
+    obs.on_event(
+        IterationCommitted(
+            session_id="s1",
+            phase_id="work",
+            role_id="worker",
+            iteration=1,
+            confidence_score=90,
+            feedback_loops=0,
+            revision=1,
+            started_at=TS_START,
+            ended_at=TS_END,
+            chosen_next=None,
+            handoff_context_ref=None,
+        )
+    )
+    metrics = _collect(reader)
+    assert "pawc.workflow.tokens.total" not in metrics
