@@ -14,6 +14,8 @@ The supported public surface is:
 - `pawc_kit.adapters.otel`
 - `pawc_kit.llm`
 
+Maintainer notes on spec gaps and deferred features (discovery, context-pack write-side): [`docs/roadmap.md`](docs/roadmap.md).
+
 ## Install
 
 Using `uv`:
