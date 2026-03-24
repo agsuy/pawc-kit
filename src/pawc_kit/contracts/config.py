@@ -153,6 +153,8 @@ class PhaseDefConfig(BaseModel):
     context_sources: list[str] | None = None
     role_overrides: dict[str, Any] | None = None
     routing: list[RoutingRuleConfig] = Field(default_factory=list)
+    human: bool = False
+    max_feedback_rounds: int | None = None
 
 
 class WorkflowConfig(BaseModel):

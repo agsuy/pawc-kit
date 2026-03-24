@@ -46,10 +46,13 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "tests"]
+addopts = "-m 'not llm_paid'"
 markers = [
     "unit: fast isolated tests",
     "integration: tests using real FS adapters",
     "slow: tests that may take longer",
+    "llm_local: tests using a local LLM backend (Ollama, llama.cpp, vLLM, etc.)",
+    "llm_paid: tests that call a paid LLM API requiring an API key (excluded by default)",
 ]
 
 [tool.coverage.run]

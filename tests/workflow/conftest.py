@@ -49,6 +49,17 @@ class MemoryArtifactStore:
             self.files[ref] = b"{}"
         return ArtifactRef(type="decision", ref=ref, description="decision")
 
+    def save_file(
+        self,
+        session_id: str,
+        rel_path: str,
+        content: str | bytes,
+    ) -> ArtifactRef:
+        del session_id
+        data = content.encode("utf-8") if isinstance(content, str) else content
+        self.files[rel_path] = data
+        return ArtifactRef(type="file", ref=rel_path, description=f"file at {rel_path}")
+
     def load_artifact(self, ref: ArtifactRef | str) -> bytes:
         key = ref.ref if isinstance(ref, ArtifactRef) else ref
         return self.files[key]
@@ -145,6 +156,9 @@ class AsyncMemoryArtifactStore:
         self, session_id: str, phase_id: str, role_id: str, sequence: int, payload: object
     ) -> ArtifactRef:
         return self._sync.save_decision(session_id, phase_id, role_id, sequence, payload)
+
+    async def save_file(self, session_id: str, rel_path: str, content: str | bytes) -> ArtifactRef:
+        return self._sync.save_file(session_id, rel_path, content)
 
     async def load_artifact(self, ref: ArtifactRef | str) -> bytes:
         return self._sync.load_artifact(ref)

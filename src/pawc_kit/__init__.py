@@ -3,11 +3,19 @@
 import logging
 
 from pawc_kit.adapters.always_continue import AlwaysContinue
+from pawc_kit.adapters.fs.context import AsyncFsContextPackWriter, FsContextPackWriter
 from pawc_kit.adapters.fs.runtime import AsyncFsRuntimeBackend, FsRuntimeBackend
 from pawc_kit.adapters.local_invoker import AsyncLocalRoleInvoker, LocalRoleInvoker
 from pawc_kit.async_session import AsyncWorkflowSession
 from pawc_kit.config import load_role_config, load_root_config, load_yaml_config
-from pawc_kit.context import ContextPack, accessible_packs, load_context_pack
+from pawc_kit.context import (
+    ContextPack,
+    accessible_packs,
+    create_composite_pack,
+    create_pack_skeleton,
+    load_context_pack,
+    save_context_metadata,
+)
 from pawc_kit.contracts import (
     ArtifactRef,
     ContextPayload,
@@ -44,6 +52,12 @@ from pawc_kit.contracts.context import (
     ContextMetadata,
     ModelUsedEntry,
 )
+from pawc_kit.contracts.discovery import (
+    DiscoveryConfig,
+    DiscoveryPhaseConfig,
+    QuestionEntry,
+    QuestionRequest,
+)
 from pawc_kit.contracts.errors import (
     ConcurrencyError,
     ConfigurationError,
@@ -54,6 +68,7 @@ from pawc_kit.contracts.errors import (
     TransitionError,
 )
 from pawc_kit.contracts.events import (
+    HumanReviewPending,
     IterationCommitted,
     PhaseStarted,
     PhaseTransitioned,
@@ -94,6 +109,7 @@ from pawc_kit.ports import (
     StateStore,
     WorkflowObserver,
 )
+from pawc_kit.ports.context import AsyncContextPackWriter
 from pawc_kit.session import WorkflowSession
 from pawc_kit.validators import check_quality_gates, validate_composition
 from pawc_kit.workflow import (
@@ -147,7 +163,10 @@ __all__ = [
     "ContextPack",
     "ContextPayload",
     "accessible_packs",
+    "create_composite_pack",
+    "create_pack_skeleton",
     "load_context_pack",
+    "save_context_metadata",
     # Execution DTOs
     "ExecutionRequest",
     "ReviewRequest",
@@ -181,7 +200,13 @@ __all__ = [
     "CompositionEntry",
     "ContextMetadata",
     "ModelUsedEntry",
+    # Discovery contracts
+    "DiscoveryConfig",
+    "DiscoveryPhaseConfig",
+    "QuestionEntry",
+    "QuestionRequest",
     # Events
+    "HumanReviewPending",
     "IterationCommitted",
     "PhaseStarted",
     "PhaseTransitioned",
@@ -214,6 +239,10 @@ __all__ = [
     # Role invoker adapters
     "AsyncLocalRoleInvoker",
     "LocalRoleInvoker",
+    # Context pack writer
+    "AsyncContextPackWriter",
+    "AsyncFsContextPackWriter",
+    "FsContextPackWriter",
     # Run controller
     "AlwaysContinue",
     "RunController",

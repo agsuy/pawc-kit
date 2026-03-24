@@ -44,6 +44,13 @@ class ArtifactStore(ArtifactReader, Protocol):
         payload: DecisionPayload,
     ) -> ArtifactRef: ...
 
+    def save_file(
+        self,
+        session_id: str,
+        rel_path: str,
+        content: str | bytes,
+    ) -> ArtifactRef: ...
+
 
 @runtime_checkable
 class AsyncArtifactStore(AsyncArtifactReader, Protocol):
@@ -65,6 +72,13 @@ class AsyncArtifactStore(AsyncArtifactReader, Protocol):
         role_id: str,
         sequence: int,
         payload: DecisionPayload,
+    ) -> ArtifactRef: ...
+
+    async def save_file(
+        self,
+        session_id: str,
+        rel_path: str,
+        content: str | bytes,
     ) -> ArtifactRef: ...
 
 

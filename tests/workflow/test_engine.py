@@ -515,3 +515,93 @@ def test_engine_pause_does_not_emit_run_failed() -> None:
     engine.run(session_id="s1", skill_name="skill", skill_version="1.0.0")
     run_failed_events = [e for e in obs.events if isinstance(e, RunFailed)]
     assert run_failed_events == []
+
+
+# ---------------------------------------------------------------------------
+# Token usage threading
+# ---------------------------------------------------------------------------
+
+
+def test_engine_threads_token_usage_through_events() -> None:
+    """Token usage from executor/reviewer results propagates to committed events."""
+    from pawc_kit._time import utc_now
+    from pawc_kit.contracts.artifacts import HandoffContext
+    from pawc_kit.llm.backend import TokenUsage
+
+    class WorkerWithUsage:
+        def execute(self, req: ExecutionRequest) -> ExecutionResult:
+            return ExecutionResult(
+                role_id=req.phase.role_id,
+                ended_at=utc_now(),
+                confidence_score=90,
+                summary="done",
+                handoff=HandoffContext(summary="handoff"),
+                usage=TokenUsage(
+                    prompt_tokens=100,
+                    completion_tokens=50,
+                    total_tokens=150,
+                    model="gpt-4o-2024-08-06",
+                    model_requested="gpt-4o",
+                ),
+            )
+
+    class ReviewerWithUsage:
+        def review(self, req: ReviewRequest) -> ReviewResult:
+            return ReviewResult(
+                role_id=req.phase.role_id,
+                ended_at=utc_now(),
+                decision=ReviewDecision(
+                    decision="APPROVE",
+                    confidence_score=88,
+                    counts_verified=True,
+                    summary="ok",
+                    findings=[],
+                ),
+                usage=TokenUsage(
+                    prompt_tokens=80,
+                    completion_tokens=30,
+                    total_tokens=110,
+                    model="gpt-4o-2024-08-06",
+                    model_requested="gpt-4o",
+                ),
+            )
+
+    engine, _, _, obs = _engine_with_recording()
+    engine.register_role("worker-role", WorkerWithUsage())
+    engine.register_role("reviewer-role", ReviewerWithUsage())
+    engine.run(session_id="s1", skill_name="skill", skill_version="1.0.0")
+
+    iter_events = [e for e in obs.events if isinstance(e, IterationCommitted)]
+    assert len(iter_events) == 1
+    assert iter_events[0].prompt_tokens == 100
+    assert iter_events[0].completion_tokens == 50
+    assert iter_events[0].total_tokens == 150
+    assert iter_events[0].model == "gpt-4o-2024-08-06"
+    assert iter_events[0].model_requested == "gpt-4o"
+
+    review_events = [e for e in obs.events if isinstance(e, ReviewCommitted)]
+    assert len(review_events) == 1
+    assert review_events[0].prompt_tokens == 80
+    assert review_events[0].total_tokens == 110
+    assert review_events[0].model == "gpt-4o-2024-08-06"
+
+    run_events = [e for e in obs.events if isinstance(e, RunCompleted)]
+    assert len(run_events) == 1
+    assert run_events[0].total_prompt_tokens == 180
+    assert run_events[0].total_completion_tokens == 80
+    assert run_events[0].total_tokens == 260
+
+
+def test_engine_no_usage_leaves_token_fields_none() -> None:
+    """When roles return no usage, token fields remain at defaults."""
+    engine, _, _, obs = _engine_with_recording()
+    engine.register_role("worker-role", MinimalWorker())
+    engine.register_role("reviewer-role", MinimalReviewer())
+    engine.run(session_id="s1", skill_name="skill", skill_version="1.0.0")
+
+    iter_events = [e for e in obs.events if isinstance(e, IterationCommitted)]
+    assert iter_events[0].prompt_tokens is None
+    assert iter_events[0].model is None
+
+    run_events = [e for e in obs.events if isinstance(e, RunCompleted)]
+    assert run_events[0].total_tokens == 0

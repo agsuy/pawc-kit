@@ -121,6 +121,18 @@ class OpenTelemetryWorkflowObserver:
             description="Duration of review executions in seconds.",
             unit="s",
         )
+        self._prompt_tokens = meter.create_counter(
+            "pawc.workflow.tokens.prompt",
+            description="Prompt tokens consumed by LLM calls.",
+        )
+        self._completion_tokens = meter.create_counter(
+            "pawc.workflow.tokens.completion",
+            description="Completion tokens consumed by LLM calls.",
+        )
+        self._total_tokens = meter.create_counter(
+            "pawc.workflow.tokens.total",
+            description="Total tokens consumed by LLM calls.",
+        )
 
     def _ensure_active(self, session_id: str) -> _ActiveSpans:
         if session_id not in self._active_spans:
@@ -200,6 +212,12 @@ class OpenTelemetryWorkflowObserver:
         span.set_attribute("phase_id", event.phase_id)
         span.set_attribute("iteration", event.iteration)
         span.set_attribute("confidence_score", event.confidence_score)
+        if event.total_tokens is not None:
+            span.set_attribute("prompt_tokens", event.prompt_tokens or 0)
+            span.set_attribute("completion_tokens", event.completion_tokens or 0)
+            span.set_attribute("total_tokens", event.total_tokens)
+            if event.model:
+                span.set_attribute("model", event.model)
         span.end(end_time=end_ns)
 
     def _trace_review_committed(self, event: ReviewCommitted) -> None:
@@ -228,6 +246,12 @@ class OpenTelemetryWorkflowObserver:
         span.set_attribute("review", event.review)
         span.set_attribute("decision", event.decision)
         span.set_attribute("confidence_score", event.confidence_score)
+        if event.total_tokens is not None:
+            span.set_attribute("prompt_tokens", event.prompt_tokens or 0)
+            span.set_attribute("completion_tokens", event.completion_tokens or 0)
+            span.set_attribute("total_tokens", event.total_tokens)
+            if event.model:
+                span.set_attribute("model", event.model)
         span.end(end_time=end_ns)
 
     def _trace_phase_transitioned(self, event: PhaseTransitioned) -> None:
@@ -244,6 +268,12 @@ class OpenTelemetryWorkflowObserver:
         if active.run_span is not None:
             active.run_span.set_attribute("run.status", event.status)
             active.run_span.set_attribute("run.feedback_loops", event.feedback_loops)
+            if event.total_tokens:
+                active.run_span.set_attribute("run.total_prompt_tokens", event.total_prompt_tokens)
+                active.run_span.set_attribute(
+                    "run.total_completion_tokens", event.total_completion_tokens
+                )
+                active.run_span.set_attribute("run.total_tokens", event.total_tokens)
             active.run_span.set_status(Status(StatusCode.OK))
             active.run_span.end()
             active.run_span = None
@@ -283,6 +313,11 @@ class OpenTelemetryWorkflowObserver:
                 _duration_seconds(event.started_at, event.ended_at),
                 {"phase_id": event.phase_id},
             )
+            if event.total_tokens is not None:
+                attrs = {"phase_id": event.phase_id, "model": event.model or "unknown"}
+                self._prompt_tokens.add(event.prompt_tokens or 0, attrs)
+                self._completion_tokens.add(event.completion_tokens or 0, attrs)
+                self._total_tokens.add(event.total_tokens, attrs)
             self._trace_iteration_committed(event)
         elif isinstance(event, ReviewCommitted):
             self._reviews.add(
@@ -293,6 +328,11 @@ class OpenTelemetryWorkflowObserver:
                 _duration_seconds(event.started_at, event.ended_at),
                 {"phase_id": event.phase_id},
             )
+            if event.total_tokens is not None:
+                attrs = {"phase_id": event.phase_id, "model": event.model or "unknown"}
+                self._prompt_tokens.add(event.prompt_tokens or 0, attrs)
+                self._completion_tokens.add(event.completion_tokens or 0, attrs)
+                self._total_tokens.add(event.total_tokens, attrs)
             self._trace_review_committed(event)
         elif isinstance(event, PhaseTransitioned):
             self._transitions.add(

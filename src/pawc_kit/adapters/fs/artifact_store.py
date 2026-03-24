@@ -65,6 +65,22 @@ class FsArtifactStore:
             description=f"Decision payload for phase {phase_id} role {role_id} sequence {sequence}",
         )
 
+    def save_file(
+        self,
+        session_id: str,
+        rel_path: str,
+        content: str | bytes,
+    ) -> ArtifactRef:
+        del session_id
+        path = self._run_dir / rel_path
+        text = content if isinstance(content, str) else content.decode("utf-8")
+        atomic_write(path, text)
+        return ArtifactRef(
+            type="file",
+            ref=rel_path,
+            description=f"File artifact at {rel_path}",
+        )
+
     def load_artifact(self, ref: ArtifactRef | str) -> bytes:
         relative_ref = ref.ref if isinstance(ref, ArtifactRef) else ref
         path = self._run_dir / relative_ref
@@ -106,6 +122,14 @@ class AsyncFsArtifactStore:
         return await asyncio.to_thread(
             self._store.save_decision, session_id, phase_id, role_id, sequence, payload
         )
+
+    async def save_file(
+        self,
+        session_id: str,
+        rel_path: str,
+        content: str | bytes,
+    ) -> ArtifactRef:
+        return await asyncio.to_thread(self._store.save_file, session_id, rel_path, content)
 
     async def load_artifact(self, ref: ArtifactRef | str) -> bytes:
         return await asyncio.to_thread(self._store.load_artifact, ref)

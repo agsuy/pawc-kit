@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Literal, Mapping
 
 from pydantic import BaseModel, Field
@@ -35,6 +36,8 @@ from pawc_kit.workflow import (
 
 if TYPE_CHECKING:
     from pawc_kit.contracts.config import RoutingRuleConfig
+
+_logger = logging.getLogger("pawc_kit.llm.roles")
 
 
 def resolve_chosen_next(
@@ -138,6 +141,8 @@ class LLMExecutorRole(Executor):
         self._max_retries = max_retries
         self.last_usage: TokenUsage | None = None
         self.last_token_estimate: dict | None = None
+        self.last_system_prompt: str | None = None
+        self.last_user_prompt: str | None = None
 
     def execute(self, req: ExecutionRequest) -> ExecutionResult:
         role_config = _resolve_role_config(
@@ -155,6 +160,19 @@ class LLMExecutorRole(Executor):
             skip_schema=skip,
             output_model=ExecutorOutput,
         )
+        self.last_system_prompt = system
+        self.last_user_prompt = user
+        _logger.debug(
+            "Assembled executor prompt phase=%s role=%s",
+            req.phase.phase_id,
+            req.phase.role_id,
+            extra={
+                "pawc_phase_id": req.phase.phase_id,
+                "pawc_role_id": req.phase.role_id,
+                "pawc_system_prompt": system,
+                "pawc_user_prompt": user,
+            },
+        )
         self.last_token_estimate = _estimate_tokens(self._backend, system, user)
         structured = StructuredOutput(self._backend, max_retries=self._max_retries)
         output = structured.call(system, user, ExecutorOutput)
@@ -167,6 +185,7 @@ class LLMExecutorRole(Executor):
             handoff=output.handoff,
             artifacts=output.artifacts,
             chosen_next=resolve_chosen_next(output.confidence_score, req.phase.routing),
+            usage=structured.last_usage,
         )
 
 
@@ -193,6 +212,8 @@ class LLMReviewerRole(Reviewer):
         self._max_retries = max_retries
         self.last_usage: TokenUsage | None = None
         self.last_token_estimate: dict | None = None
+        self.last_system_prompt: str | None = None
+        self.last_user_prompt: str | None = None
 
     def review(self, req: ReviewRequest) -> ReviewResult:
         role_config = _resolve_role_config(
@@ -211,6 +232,19 @@ class LLMReviewerRole(Reviewer):
             skip_schema=skip,
             output_model=ReviewerOutput,
         )
+        self.last_system_prompt = system
+        self.last_user_prompt = user
+        _logger.debug(
+            "Assembled reviewer prompt phase=%s role=%s",
+            req.phase.phase_id,
+            req.phase.role_id,
+            extra={
+                "pawc_phase_id": req.phase.phase_id,
+                "pawc_role_id": req.phase.role_id,
+                "pawc_system_prompt": system,
+                "pawc_user_prompt": user,
+            },
+        )
         self.last_token_estimate = _estimate_tokens(self._backend, system, user)
         structured = StructuredOutput(self._backend, max_retries=self._max_retries)
         output = structured.call(system, user, ReviewerOutput)
@@ -219,7 +253,6 @@ class LLMReviewerRole(Reviewer):
         decision = output.decision
         gate_override_reason: str | None = None
         if self._quality_gates and decision == "APPROVE":
-            # Config may supply int or str (e.g. from YAML); normalize to int.
             critical_allowed = int(str(self._quality_gates.get("critical_findings_allowed", 0)))
             high_allowed = int(str(self._quality_gates.get("high_findings_allowed", 1)))
             passed, reason = check_quality_gates(output.findings, critical_allowed, high_allowed)
@@ -244,6 +277,7 @@ class LLMReviewerRole(Reviewer):
                 gate_override_reason=gate_override_reason,
             ),
             chosen_next=chosen_next,
+            usage=structured.last_usage,
         )
 
 
@@ -268,6 +302,8 @@ class AsyncLLMExecutorRole(AsyncExecutor):
         self._max_retries = max_retries
         self.last_usage: TokenUsage | None = None
         self.last_token_estimate: dict | None = None
+        self.last_system_prompt: str | None = None
+        self.last_user_prompt: str | None = None
 
     async def execute(self, req: ExecutionRequest) -> ExecutionResult:
         role_config = _resolve_role_config(
@@ -285,6 +321,19 @@ class AsyncLLMExecutorRole(AsyncExecutor):
             skip_schema=skip,
             output_model=ExecutorOutput,
         )
+        self.last_system_prompt = system
+        self.last_user_prompt = user
+        _logger.debug(
+            "Assembled executor prompt phase=%s role=%s",
+            req.phase.phase_id,
+            req.phase.role_id,
+            extra={
+                "pawc_phase_id": req.phase.phase_id,
+                "pawc_role_id": req.phase.role_id,
+                "pawc_system_prompt": system,
+                "pawc_user_prompt": user,
+            },
+        )
         self.last_token_estimate = _estimate_tokens(self._backend, system, user)
         structured = AsyncStructuredOutput(self._backend, max_retries=self._max_retries)
         output = await structured.call(system, user, ExecutorOutput)
@@ -297,6 +346,7 @@ class AsyncLLMExecutorRole(AsyncExecutor):
             handoff=output.handoff,
             artifacts=output.artifacts,
             chosen_next=resolve_chosen_next(output.confidence_score, req.phase.routing),
+            usage=structured.last_usage,
         )
 
 
@@ -323,6 +373,8 @@ class AsyncLLMReviewerRole(AsyncReviewer):
         self._max_retries = max_retries
         self.last_usage: TokenUsage | None = None
         self.last_token_estimate: dict | None = None
+        self.last_system_prompt: str | None = None
+        self.last_user_prompt: str | None = None
 
     async def review(self, req: ReviewRequest) -> ReviewResult:
         role_config = _resolve_role_config(
@@ -341,6 +393,19 @@ class AsyncLLMReviewerRole(AsyncReviewer):
             skip_schema=skip,
             output_model=ReviewerOutput,
         )
+        self.last_system_prompt = system
+        self.last_user_prompt = user
+        _logger.debug(
+            "Assembled reviewer prompt phase=%s role=%s",
+            req.phase.phase_id,
+            req.phase.role_id,
+            extra={
+                "pawc_phase_id": req.phase.phase_id,
+                "pawc_role_id": req.phase.role_id,
+                "pawc_system_prompt": system,
+                "pawc_user_prompt": user,
+            },
+        )
         self.last_token_estimate = _estimate_tokens(self._backend, system, user)
         structured = AsyncStructuredOutput(self._backend, max_retries=self._max_retries)
         output = await structured.call(system, user, ReviewerOutput)
@@ -349,7 +414,6 @@ class AsyncLLMReviewerRole(AsyncReviewer):
         decision = output.decision
         gate_override_reason: str | None = None
         if self._quality_gates and decision == "APPROVE":
-            # Config may supply int or str (e.g. from YAML); normalize to int.
             critical_allowed = int(str(self._quality_gates.get("critical_findings_allowed", 0)))
             high_allowed = int(str(self._quality_gates.get("high_findings_allowed", 1)))
             passed, reason = check_quality_gates(output.findings, critical_allowed, high_allowed)
@@ -374,6 +438,7 @@ class AsyncLLMReviewerRole(AsyncReviewer):
                 gate_override_reason=gate_override_reason,
             ),
             chosen_next=chosen_next,
+            usage=structured.last_usage,
         )
 
 
