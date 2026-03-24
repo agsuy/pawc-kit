@@ -1,14 +1,15 @@
-"""Context pack read-side API: load, resolve, validate, scope."""
+"""Context pack API: load, resolve, validate, scope, create."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from pawc_kit.config import load_root_config
 from pawc_kit.contracts.artifacts import HandoffArtifact, HandoffContext
 from pawc_kit.contracts.config import RootConfig
-from pawc_kit.contracts.context import ContextMetadata
+from pawc_kit.contracts.context import CompositionEntry, ContextMetadata
 from pawc_kit.contracts.errors import ConfigurationError
 from pawc_kit.contracts.state import SessionState
 from pawc_kit.validators import validate_composition
@@ -374,6 +375,112 @@ def accessible_packs(
 
 # ------------------------------------------------------------------
 # 12. load_snapshotted_root_config
+# ------------------------------------------------------------------
+
+
+def save_context_metadata(pack_path: str | Path, metadata: ContextMetadata) -> None:
+    """Serialize *metadata* to ``context.json`` in *pack_path*."""
+    pack_path = Path(pack_path)
+    dest = pack_path / "context.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
+
+
+def create_pack_skeleton(
+    state_directory: str | Path,
+    context_id: str,
+    metadata: ContextMetadata,
+    request_files: dict[str, str],
+    config_snapshot: dict[str, str | bytes],
+) -> Path:
+    """Create a context pack directory with initial files (sync convenience).
+
+    Returns the pack directory path.
+    """
+    root = Path(state_directory) / "contexts" / context_id
+    root.mkdir(parents=True, exist_ok=True)
+
+    save_context_metadata(root, metadata)
+
+    for rel_path, content in request_files.items():
+        dest = root / "request" / rel_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(content, encoding="utf-8")
+
+    for rel_path, content in config_snapshot.items():
+        dest = root / rel_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        text = content if isinstance(content, str) else content.decode("utf-8")
+        dest.write_text(text, encoding="utf-8")
+
+    for subdir in ("discovery", "decisions", "handoffs"):
+        (root / subdir).mkdir(parents=True, exist_ok=True)
+
+    return root
+
+
+# ------------------------------------------------------------------
+# 13. create_composite_pack
+# ------------------------------------------------------------------
+
+
+def create_composite_pack(
+    state_directory: str | Path,
+    context_id: str,
+    child_ids: list[str],
+    *,
+    label: str | None = None,
+    max_composition_size: int = 5,
+) -> Path:
+    """Create a composite context pack referencing existing child packs.
+
+    Validates that all children exist and are finalized, that there are no
+    duplicate IDs, and that the count does not exceed *max_composition_size*.
+    A synthetic ``request/composition.md`` is generated describing the children.
+
+    Returns the pack directory path.  The pack is created with
+    ``finalized=False``; callers must explicitly finalize it later.
+    """
+    state_directory = Path(state_directory)
+
+    metadata = ContextMetadata(
+        context_id=context_id,
+        created_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        composition=[CompositionEntry(context_id=cid) for cid in child_ids],
+        finalized=False,
+        label=label,
+    )
+    errors = validate_composition(metadata, max_composition_size)
+    if errors:
+        raise ConfigurationError("Composition validation failed: " + "; ".join(errors))
+
+    for cid in child_ids:
+        child_path = state_directory / "contexts" / cid
+        if not child_path.is_dir():
+            raise ConfigurationError(f"Child context pack {cid!r} not found at {child_path}")
+        child_meta = load_context_metadata(child_path)
+        if not child_meta.finalized:
+            raise ConfigurationError(f"Child context pack {cid!r} is not finalized")
+
+    lines = ["# Composite Context Pack\n"]
+    if label:
+        lines.append(f"**Label:** {label}\n")
+    lines.append(f"\nComposed from {len(child_ids)} child pack(s):\n")
+    for cid in child_ids:
+        child_path = state_directory / "contexts" / cid
+        child_meta = load_context_metadata(child_path)
+        child_label = child_meta.label or "(no label)"
+        lines.append(f"- `{cid}` — {child_label}")
+
+    request_files = {"composition.md": "\n".join(lines) + "\n"}
+
+    return create_pack_skeleton(
+        state_directory, context_id, metadata, request_files, config_snapshot={}
+    )
+
+
+# ------------------------------------------------------------------
+# 14. load_snapshotted_root_config
 # ------------------------------------------------------------------
 
 
