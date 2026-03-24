@@ -160,3 +160,29 @@ def test_async_artifact_store_load_artifact(tmp_path: Path) -> None:
     ref = asyncio.run(store.save_handoff("s", "work", "w", 1, HandoffContext(summary="done")))
     raw = asyncio.run(store.load_artifact(ref))
     assert len(raw) > 0
+
+
+# ---------------------------------------------------------------------------
+# save_file
+# ---------------------------------------------------------------------------
+
+
+def test_save_file_creates_file_with_string_content(tmp_path: Path) -> None:
+    store = FsArtifactStore(tmp_path)
+    ref = store.save_file("s", "discovery/sources.md", "# Sources\n")
+    assert ref.type == "file"
+    assert ref.ref == "discovery/sources.md"
+    assert (tmp_path / "discovery" / "sources.md").read_text() == "# Sources\n"
+
+
+def test_save_file_creates_file_with_bytes_content(tmp_path: Path) -> None:
+    store = FsArtifactStore(tmp_path)
+    store.save_file("s", "plan/architecture.md", b"# Architecture\n")
+    assert (tmp_path / "plan" / "architecture.md").read_text() == "# Architecture\n"
+
+
+def test_async_save_file(tmp_path: Path) -> None:
+    store = AsyncFsArtifactStore(tmp_path)
+    ref = asyncio.run(store.save_file("s", "discovery/summary.md", "Summary content"))
+    assert ref.ref == "discovery/summary.md"
+    assert (tmp_path / "discovery" / "summary.md").read_text() == "Summary content"
