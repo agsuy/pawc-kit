@@ -11,6 +11,7 @@ from pawc_kit.contracts.errors import ConfigurationError
 if TYPE_CHECKING:
     from pawc_kit.context import ContextPack
     from pawc_kit.contracts.config import PhaseDefConfig, RoutingRuleConfig
+    from pawc_kit.contracts.discovery import DiscoveryConfig
 
 PhaseKind = Literal["executor", "review"]
 
@@ -28,6 +29,8 @@ class PhaseDefinition:
     context_sources: list[str] | None = None
     role_overrides: Mapping[str, Any] | None = None
     routing: list[RoutingRuleConfig] = field(default_factory=list)
+    human: bool = False
+    max_feedback_rounds: int | None = None
 
 
 class PhaseGraph:
@@ -104,6 +107,8 @@ class PhaseGraph:
                 context_sources=list(p.context_sources) if p.context_sources is not None else None,
                 role_overrides=p.role_overrides,
                 routing=list(p.routing),
+                human=p.human,
+                max_feedback_rounds=p.max_feedback_rounds,
             )
             for p in phases
         ]
@@ -111,6 +116,81 @@ class PhaseGraph:
             return PhaseGraph(definitions)
         except ValueError as exc:
             raise ConfigurationError(f"Invalid workflow phases in config: {exc}") from exc
+
+    @staticmethod
+    def from_discovery_config(config: DiscoveryConfig) -> PhaseGraph:
+        """Build a :class:`PhaseGraph` from a :class:`DiscoveryConfig`.
+
+        Phase kind is inferred: phases with ``on_approve`` or
+        ``can_request_changes_from`` are ``"review"``; others are
+        ``"executor"``.  ``max_questions`` is forwarded as a
+        ``role_overrides`` entry so the executor can enforce it.
+
+        Raises :class:`~pawc_kit.contracts.errors.ConfigurationError`
+        on structural issues (e.g. ``require_human_approval`` is true but
+        no ``human: true`` phase exists before any terminal phase).
+        """
+
+        def _normalize(value: str | list[str]) -> list[str]:
+            if isinstance(value, str):
+                return [value]
+            return list(value)
+
+        phase_ids = {p.phase for p in config.phases}
+        definitions: list[PhaseDefinition] = []
+        has_human = False
+        for p in config.phases:
+            on_approve = _normalize(p.on_approve)
+            can_rc = _normalize(p.can_request_changes_from)
+            is_review = bool(on_approve or can_rc)
+            kind: PhaseKind = "review" if is_review else "executor"
+
+            overrides = dict(p.role_overrides) if p.role_overrides else {}
+            if p.max_questions is not None:
+                overrides["max_questions"] = p.max_questions
+
+            if p.human:
+                has_human = True
+
+            definitions.append(
+                PhaseDefinition(
+                    phase_id=p.phase,
+                    role_id=p.phase,
+                    kind=kind,
+                    on_complete=_normalize(p.on_complete),
+                    on_approve=on_approve,
+                    can_request_changes_from=can_rc,
+                    role_overrides=overrides or None,
+                    routing=list(p.routing),
+                    human=p.human,
+                    max_feedback_rounds=p.max_rounds,
+                )
+            )
+
+        if config.require_human_approval and not has_human:
+            raise ConfigurationError("require_human_approval is true but no phase has human=true")
+
+        terminal_ids = {d.phase_id for d in definitions if not d.on_complete and not d.on_approve}
+        if config.require_human_approval and has_human:
+            human_ids = {d.phase_id for d in definitions if d.human}
+            reachable_before_terminal = set[str]()
+            for d in definitions:
+                if d.phase_id in terminal_ids:
+                    break
+                reachable_before_terminal.add(d.phase_id)
+            if not human_ids & reachable_before_terminal:
+                raise ConfigurationError(
+                    "require_human_approval is true but no human phase is "
+                    "reachable before a terminal phase"
+                )
+
+        for target in phase_ids:
+            pass  # target resolution checked by PhaseGraph._validate
+
+        try:
+            return PhaseGraph(definitions)
+        except ValueError as exc:
+            raise ConfigurationError(f"Invalid discovery phases: {exc}") from exc
 
     def validate_against_pack(self, pack: ContextPack) -> None:
         """Raise :class:`ConfigurationError` if any phase's ``context_sources``
