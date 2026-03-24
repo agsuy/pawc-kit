@@ -9,8 +9,10 @@ from typing import Any, Mapping
 from pawc_kit._time import utc_now
 from pawc_kit.context import ContextPack, accessible_packs
 from pawc_kit.contracts.artifacts import DecisionPayload
+from pawc_kit.contracts.discovery import QuestionEntry
 from pawc_kit.contracts.errors import ConfigurationError, StateNotFoundError, TransitionError
 from pawc_kit.contracts.events import (
+    HumanReviewPending,
     IterationCommitted,
     PhaseStarted,
     PhaseTransitioned,
@@ -25,6 +27,7 @@ from pawc_kit.contracts.execution import ContextPayload, ExecutionRequest, Revie
 from pawc_kit.contracts.state import IterationEntry, ReviewEntry, SessionState
 from pawc_kit.ports.artifacts import ArtifactStore, AsyncArtifactStore
 from pawc_kit.ports.clock import AsyncClock, Clock
+from pawc_kit.ports.context import AsyncContextPackWriter
 from pawc_kit.ports.controller import RunController, RunSignal
 from pawc_kit.ports.invoker import AsyncRoleInvoker, RoleInvoker
 from pawc_kit.ports.observers import AsyncWorkflowObserver, WorkflowObserver
@@ -45,6 +48,9 @@ class _SyncRuntime:
     stored: StoredSession
     session_metadata: SessionMetadata
     context_pack: ContextPack = None  # type: ignore[assignment]
+    total_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
+    total_tokens: int = 0
 
     @property
     def state(self) -> SessionState:
@@ -56,10 +62,34 @@ class _AsyncRuntime:
     stored: StoredSession
     session_metadata: SessionMetadata
     context_pack: ContextPack = None  # type: ignore[assignment]
+    total_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
+    total_tokens: int = 0
 
     @property
     def state(self) -> SessionState:
         return self.stored.state
+
+
+def _token_event_kwargs(usage: Any) -> dict[str, Any]:
+    """Extract token fields from a TokenUsage for event constructors."""
+    if usage is None:
+        return {}
+    return {
+        "prompt_tokens": usage.prompt_tokens,
+        "completion_tokens": usage.completion_tokens,
+        "total_tokens": usage.total_tokens,
+        "model": usage.model,
+        "model_requested": usage.model_requested,
+    }
+
+
+def _accumulate_runtime_usage(runtime: _SyncRuntime | _AsyncRuntime, usage: Any) -> None:
+    if usage is None:
+        return
+    runtime.total_prompt_tokens += usage.prompt_tokens
+    runtime.total_completion_tokens += usage.completion_tokens
+    runtime.total_tokens += usage.total_tokens
 
 
 class _SystemClock:
@@ -81,6 +111,25 @@ def _count_iterations(state: SessionState, phase_id: str) -> int:
 
 def _count_reviews(state: SessionState, phase_id: str) -> int:
     return sum(1 for entry in state.reviews if entry.phase_id == phase_id)
+
+
+def _find_committed_human_review(
+    state: SessionState, phase_id: str, expected_review: int
+) -> ReviewEntry | None:
+    """Find a non-PENDING review entry for the given phase and review index.
+
+    Used on resume to detect that a human review decision was injected
+    externally while the engine was paused.
+    """
+    for entry in state.reviews:
+        if (
+            entry.phase_id == phase_id
+            and entry.review == expected_review
+            and entry.decision is not None
+            and entry.decision != "PENDING"
+        ):
+            return entry
+    return None
 
 
 def _resolve_transition_target(
@@ -444,6 +493,9 @@ class WorkflowEngine:
                 revision=runtime.stored.revision,
                 started_at=runtime.state.started_at,
                 completed_at=completed_at,
+                total_prompt_tokens=runtime.total_prompt_tokens,
+                total_completion_tokens=runtime.total_completion_tokens,
+                total_tokens=runtime.total_tokens,
             )
         )
 
@@ -493,6 +545,7 @@ class WorkflowEngine:
         )
 
     def _run_executor(self, runtime: _SyncRuntime, phase: PhaseDefinition) -> None:
+        targets = self._graph.on_complete_targets(phase.phase_id)
         iteration_count = _count_iterations(runtime.state, phase.phase_id)
         last_result: ExecutionResult | None = None
 
@@ -533,6 +586,7 @@ class WorkflowEngine:
                 update={"phase_iterations": [*runtime.state.phase_iterations, entry]}
             )
             self._save(runtime, state)
+            _accumulate_runtime_usage(runtime, result.usage)
             self._emit(
                 IterationCommitted(
                     session_id=runtime.state.session_id,
@@ -546,10 +600,13 @@ class WorkflowEngine:
                     ended_at=result.ended_at,
                     chosen_next=result.chosen_next,
                     handoff_context_ref=entry.handoff_context_ref,
+                    **_token_event_kwargs(result.usage),
                 )
             )
 
             iteration_count += 1
+            if not targets:
+                break
             if (
                 self._confidence_floor is not None
                 and result.confidence_score < self._confidence_floor
@@ -561,7 +618,6 @@ class WorkflowEngine:
             ):
                 break
 
-        targets = self._graph.on_complete_targets(phase.phase_id)
         next_phase = _resolve_transition_target(
             phase.phase_id, "on_complete", targets, last_result.chosen_next
         )
@@ -639,6 +695,7 @@ class WorkflowEngine:
             }
         )
         self._save(runtime, state)
+        _accumulate_runtime_usage(runtime, result.usage)
         self._emit(
             ReviewCommitted(
                 session_id=runtime.state.session_id,
@@ -654,12 +711,14 @@ class WorkflowEngine:
                 target_phase=payload.target_phase,
                 chosen_next=result.chosen_next,
                 findings_ref=decision_ref.ref,
+                **_token_event_kwargs(result.usage),
             )
         )
         self._check_signal(runtime)
 
         if payload.decision == "REQUEST_CHANGES":
-            if runtime.state.feedback_loops >= self._max_feedback_rounds:
+            phase_cap = phase.max_feedback_rounds or self._max_feedback_rounds
+            if runtime.state.feedback_loops >= phase_cap:
                 self._finalize(runtime, completed=False)
                 return
 
@@ -687,6 +746,8 @@ class AsyncWorkflowEngine:
         metadata: Mapping[str, Any] | None = None,
         invoker: AsyncRoleInvoker | None = None,
         controller: RunController | None = None,
+        context_pack_writer: AsyncContextPackWriter | None = None,
+        adhoc_questions: bool = False,
     ) -> None:
         self._graph = graph
         self._state_store = state_store
@@ -698,6 +759,9 @@ class AsyncWorkflowEngine:
         self._max_feedback_rounds = max_feedback_rounds
         self._confidence_floor = confidence_floor
         self._metadata = metadata
+        self._context_pack_writer = context_pack_writer
+        self._adhoc_questions = adhoc_questions
+        self._applied_human_reviews: set[tuple[str, int]] = set()
         self._explicit_invoker = invoker is not None
         if invoker is not None:
             self._invoker: AsyncRoleInvoker = invoker
@@ -731,6 +795,7 @@ class AsyncWorkflowEngine:
         context_id: str | None = None,
         context_pack: ContextPack | None = None,
     ) -> SessionState:
+        self._applied_human_reviews = set()
         metadata = SessionMetadata(
             session_id=session_id,
             skill_name=skill_name,
@@ -886,6 +951,8 @@ class AsyncWorkflowEngine:
         status = "completed" if completed else "abandoned"
         state = runtime.state.model_copy(update={"status": status, "completed_at": completed_at})
         await self._save(runtime, state)
+        if completed and self._context_pack_writer is not None and runtime.state.context_id:
+            await self._context_pack_writer.finalize(runtime.state.context_id, approved=True)
         await self._emit(
             RunCompleted(
                 session_id=runtime.state.session_id,
@@ -894,6 +961,9 @@ class AsyncWorkflowEngine:
                 revision=runtime.stored.revision,
                 started_at=runtime.state.started_at,
                 completed_at=completed_at,
+                total_prompt_tokens=runtime.total_prompt_tokens,
+                total_completion_tokens=runtime.total_completion_tokens,
+                total_tokens=runtime.total_tokens,
             )
         )
 
@@ -945,6 +1015,7 @@ class AsyncWorkflowEngine:
         )
 
     async def _run_executor(self, runtime: _AsyncRuntime, phase: PhaseDefinition) -> None:
+        targets = self._graph.on_complete_targets(phase.phase_id)
         iteration_count = _count_iterations(runtime.state, phase.phase_id)
         last_result: ExecutionResult | None = None
 
@@ -987,6 +1058,7 @@ class AsyncWorkflowEngine:
                 update={"phase_iterations": [*runtime.state.phase_iterations, entry]}
             )
             await self._save(runtime, state)
+            _accumulate_runtime_usage(runtime, result.usage)
             await self._emit(
                 IterationCommitted(
                     session_id=runtime.state.session_id,
@@ -1000,10 +1072,32 @@ class AsyncWorkflowEngine:
                     ended_at=result.ended_at,
                     chosen_next=result.chosen_next,
                     handoff_context_ref=entry.handoff_context_ref,
+                    **_token_event_kwargs(result.usage),
                 )
             )
 
+            if result.pending_question is not None:
+                if not self._adhoc_questions:
+                    raise ConfigurationError(
+                        f"Phase {phase.phase_id!r} returned a pending_question but "
+                        "adhoc_questions is disabled"
+                    )
+                if self._context_pack_writer is not None and runtime.state.context_id:
+                    q_entry = QuestionEntry(
+                        question_id=result.pending_question.question_id,
+                        question=result.pending_question.question,
+                        phase_id=phase.phase_id,
+                        asked_by=result.role_id,
+                        asked_at=result.ended_at,
+                    )
+                    await self._context_pack_writer.append_question(
+                        runtime.state.context_id, q_entry
+                    )
+                raise _StopRequested()
+
             iteration_count += 1
+            if not targets:
+                break
             if (
                 self._confidence_floor is not None
                 and result.confidence_score < self._confidence_floor
@@ -1015,7 +1109,6 @@ class AsyncWorkflowEngine:
             ):
                 break
 
-        targets = self._graph.on_complete_targets(phase.phase_id)
         next_phase = _resolve_transition_target(
             phase.phase_id, "on_complete", targets, last_result.chosen_next
         )
@@ -1025,6 +1118,54 @@ class AsyncWorkflowEngine:
         await self._transition_to(runtime, phase.phase_id, next_phase)
 
     async def _run_review(self, runtime: _AsyncRuntime, phase: PhaseDefinition) -> None:
+        review_idx = _count_reviews(runtime.state, phase.phase_id) + 1
+
+        # --- Resume path: check for a previously committed human review ---
+        committed = _find_committed_human_review(runtime.state, phase.phase_id, review_idx)
+        if committed is not None:
+            self._applied_human_reviews.add((phase.phase_id, committed.review))
+            await self._apply_committed_review(runtime, phase, committed)
+            return
+
+        # When a PENDING stub is replaced in-place with a committed review,
+        # _count_reviews includes the committed entry, bumping review_idx by 1.
+        # Check at review_idx-1 for the resolved PENDING, but only if this
+        # review hasn't already been applied in this engine run (loop-back guard).
+        if phase.human and review_idx > 1:
+            key = (phase.phase_id, review_idx - 1)
+            if key not in self._applied_human_reviews:
+                prev = _find_committed_human_review(runtime.state, phase.phase_id, review_idx - 1)
+                if prev is not None:
+                    self._applied_human_reviews.add(key)
+                    await self._apply_committed_review(runtime, phase, prev)
+                    return
+
+        # --- Human review: write PENDING stub and pause ---
+        if phase.human:
+            now = await self._clock.now()
+            stub = ReviewEntry(
+                review=review_idx,
+                phase_id=phase.phase_id,
+                role_id=phase.role_id,
+                decision="PENDING",
+                confidence_score=None,
+                ended_at=now,
+            )
+            state = runtime.state.model_copy(update={"reviews": [*runtime.state.reviews, stub]})
+            await self._save(runtime, state)
+            await self._emit(
+                HumanReviewPending(
+                    session_id=runtime.state.session_id,
+                    phase_id=phase.phase_id,
+                    role_id=phase.role_id,
+                    review=review_idx,
+                    revision=runtime.stored.revision,
+                    occurred_at=now,
+                )
+            )
+            raise _StopRequested()
+
+        # --- Normal automated review path ---
         started_at = await self._clock.now()
         result = await self._invoker.invoke_reviewer(
             await self._build_review_request(runtime, phase)
@@ -1073,11 +1214,11 @@ class AsyncWorkflowEngine:
             runtime.state.session_id,
             phase.phase_id,
             result.role_id,
-            _count_reviews(runtime.state, phase.phase_id) + 1,
+            review_idx,
             payload,
         )
         review_entry = ReviewEntry(
-            review=_count_reviews(runtime.state, phase.phase_id) + 1,
+            review=review_idx,
             phase_id=phase.phase_id,
             role_id=result.role_id,
             decision=payload.decision,
@@ -1095,6 +1236,7 @@ class AsyncWorkflowEngine:
             }
         )
         await self._save(runtime, state)
+        _accumulate_runtime_usage(runtime, result.usage)
         await self._emit(
             ReviewCommitted(
                 session_id=runtime.state.session_id,
@@ -1110,14 +1252,51 @@ class AsyncWorkflowEngine:
                 target_phase=payload.target_phase,
                 chosen_next=result.chosen_next,
                 findings_ref=decision_ref.ref,
+                **_token_event_kwargs(result.usage),
             )
         )
         self._check_signal(runtime)
 
         if payload.decision == "REQUEST_CHANGES":
-            if runtime.state.feedback_loops >= self._max_feedback_rounds:
+            phase_cap = phase.max_feedback_rounds or self._max_feedback_rounds
+            if runtime.state.feedback_loops >= phase_cap:
                 await self._finalize(runtime, completed=False)
                 return
+
+        if next_phase is None:
+            await self._finalize(runtime, completed=True)
+            return
+        await self._transition_to(runtime, phase.phase_id, next_phase)
+
+    async def _apply_committed_review(
+        self,
+        runtime: _AsyncRuntime,
+        phase: PhaseDefinition,
+        entry: ReviewEntry,
+    ) -> None:
+        """Transition based on an already-committed review entry (human resume path)."""
+        if entry.decision == "APPROVE":
+            next_phase = _resolve_transition_target(
+                phase.phase_id,
+                "on_approve",
+                self._graph.on_approve_targets(phase.phase_id),
+                entry.target_phase,
+            )
+        elif entry.decision == "REQUEST_CHANGES":
+            next_phase = _resolve_request_change_target(
+                phase.phase_id,
+                self._graph.can_request_changes_from_targets(phase.phase_id),
+                entry.target_phase,
+            )
+            if next_phase is None:
+                raise TransitionError(
+                    f"{phase.phase_id!r} cannot REQUEST_CHANGES without "
+                    "can_request_changes_from targets"
+                )
+        else:
+            raise TransitionError(
+                f"{phase.phase_id!r} committed review has unexpected decision: {entry.decision!r}"
+            )
 
         if next_phase is None:
             await self._finalize(runtime, completed=True)
