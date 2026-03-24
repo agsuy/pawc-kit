@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Mapping, Protocol, runtime_checkable
 
 from pawc_kit.contracts.artifacts import DecisionPayload, FindingEntry, HandoffContext
+from pawc_kit.contracts.discovery import QuestionRequest
 from pawc_kit.contracts.execution import ExecutionRequest, ReviewRequest
 from pawc_kit.contracts.state import ArtifactRef, IterationEntry, ReviewEntry, SessionState
 from pawc_kit.ports.artifacts import ArtifactReader, AsyncArtifactReader
@@ -13,6 +14,7 @@ from pawc_kit.workflow.graph import PhaseDefinition
 
 if TYPE_CHECKING:
     from pawc_kit.context import ContextPack
+    from pawc_kit.llm.backend import TokenUsage
 
 
 @dataclass(frozen=True)
@@ -92,6 +94,8 @@ class ExecutionResult:
     artifacts: list[ArtifactRef] = field(default_factory=list)
     handoff: HandoffContext | None = None
     chosen_next: str | None = None
+    pending_question: QuestionRequest | None = None
+    usage: TokenUsage | None = None
 
 
 @dataclass(frozen=True)
@@ -102,6 +106,7 @@ class ReviewResult:
     ended_at: str
     decision: ReviewDecision
     chosen_next: str | None = None
+    usage: TokenUsage | None = None
 
 
 @runtime_checkable
