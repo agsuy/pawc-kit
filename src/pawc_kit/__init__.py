@@ -130,7 +130,7 @@ from pawc_kit.workflow import (
     WorkflowHistoryView,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 logging.getLogger("pawc_kit").addHandler(logging.NullHandler())
 
