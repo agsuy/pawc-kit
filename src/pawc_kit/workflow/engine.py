@@ -44,21 +44,7 @@ from pawc_kit.workflow.roles import (
 
 
 @dataclass
-class _SyncRuntime:
-    stored: StoredSession
-    session_metadata: SessionMetadata
-    context_pack: ContextPack = None  # type: ignore[assignment]
-    total_prompt_tokens: int = 0
-    total_completion_tokens: int = 0
-    total_tokens: int = 0
-
-    @property
-    def state(self) -> SessionState:
-        return self.stored.state
-
-
-@dataclass
-class _AsyncRuntime:
+class _Runtime:
     stored: StoredSession
     session_metadata: SessionMetadata
     context_pack: ContextPack = None  # type: ignore[assignment]
@@ -84,7 +70,7 @@ def _token_event_kwargs(usage: Any) -> dict[str, Any]:
     }
 
 
-def _accumulate_runtime_usage(runtime: _SyncRuntime | _AsyncRuntime, usage: Any) -> None:
+def _accumulate_runtime_usage(runtime: _Runtime, usage: Any) -> None:
     if usage is None:
         return
     runtime.total_prompt_tokens += usage.prompt_tokens
@@ -348,10 +334,10 @@ class WorkflowEngine:
         if stored.state.status == "initialized":
             corrected = stored.state.model_copy(update={"started_at": self._clock.now()})
             stored = StoredSession(state=corrected, revision=stored.revision)
-        runtime = _SyncRuntime(stored, metadata, pack)
+        runtime = _Runtime(stored, metadata, pack)
 
         try:
-            if runtime.state.status in ("completed", "abandoned"):
+            if runtime.state.status in ("completed", "abandoned", "failed"):
                 return runtime.state
             self._invoker.validate(self._graph)
             self._graph.validate_against_pack(pack)
@@ -402,14 +388,14 @@ class WorkflowEngine:
         except StateNotFoundError:
             return self._state_store.initialize(metadata)
 
-    def _save(self, runtime: _SyncRuntime, state: SessionState) -> None:
+    def _save(self, runtime: _Runtime, state: SessionState) -> None:
         runtime.stored = self._state_store.save(state, expected_revision=runtime.stored.revision)
 
     def _emit(self, event: WorkflowEvent) -> None:
         if self._observer is not None:
             self._observer.on_event(event)
 
-    def _check_signal(self, runtime: _SyncRuntime) -> None:
+    def _check_signal(self, runtime: _Runtime) -> None:
         """Check the run controller and raise if the run should stop.
 
         Called at every commit boundary (top of executor ``while True`` and
@@ -421,11 +407,11 @@ class WorkflowEngine:
         if signal is RunSignal.CONTINUE:
             return
         if signal is RunSignal.CANCEL:
-            self._finalize(runtime, completed=False)
+            self._finalize(runtime, status="abandoned")
             raise _CancelRequested()
         raise _StopRequested()
 
-    def _start_run(self, runtime: _SyncRuntime) -> None:
+    def _start_run(self, runtime: _Runtime) -> None:
         state = runtime.state.model_copy(
             update={
                 "status": "in_progress",
@@ -454,7 +440,7 @@ class WorkflowEngine:
             )
         )
 
-    def _transition_to(self, runtime: _SyncRuntime, from_phase_id: str, to_phase_id: str) -> None:
+    def _transition_to(self, runtime: _Runtime, from_phase_id: str, to_phase_id: str) -> None:
         state = runtime.state.model_copy(update={"current_phase": to_phase_id})
         self._save(runtime, state)
         now = self._clock.now()
@@ -480,9 +466,8 @@ class WorkflowEngine:
             )
         )
 
-    def _finalize(self, runtime: _SyncRuntime, *, completed: bool) -> None:
+    def _finalize(self, runtime: _Runtime, *, status: str) -> None:
         completed_at = self._clock.now()
-        status = "completed" if completed else "abandoned"
         state = runtime.state.model_copy(update={"status": status, "completed_at": completed_at})
         self._save(runtime, state)
         self._emit(
@@ -500,7 +485,7 @@ class WorkflowEngine:
         )
 
     def _history_for_phase(
-        self, runtime: _SyncRuntime, phase: PhaseDefinition
+        self, runtime: _Runtime, phase: PhaseDefinition
     ) -> WorkflowHistoryView:
         previous_decision: DecisionPayload | None = None
         for review in reversed(runtime.state.reviews):
@@ -521,7 +506,7 @@ class WorkflowEngine:
         )
 
     def _build_execution_request(
-        self, runtime: _SyncRuntime, phase: PhaseDefinition
+        self, runtime: _Runtime, phase: PhaseDefinition
     ) -> ExecutionRequest:
         scoped = _scope_context_pack(runtime.context_pack, phase)
         return ExecutionRequest(
@@ -532,7 +517,7 @@ class WorkflowEngine:
             metadata=self._metadata,
         )
 
-    def _build_review_request(self, runtime: _SyncRuntime, phase: PhaseDefinition) -> ReviewRequest:
+    def _build_review_request(self, runtime: _Runtime, phase: PhaseDefinition) -> ReviewRequest:
         scoped = _scope_context_pack(runtime.context_pack, phase)
         return ReviewRequest(
             session=_clone_state(runtime.state),
@@ -544,7 +529,7 @@ class WorkflowEngine:
             request_change_targets=self._graph.can_request_changes_from_targets(phase.phase_id),
         )
 
-    def _run_executor(self, runtime: _SyncRuntime, phase: PhaseDefinition) -> None:
+    def _run_executor(self, runtime: _Runtime, phase: PhaseDefinition) -> None:
         targets = self._graph.on_complete_targets(phase.phase_id)
         iteration_count = _count_iterations(runtime.state, phase.phase_id)
         last_result: ExecutionResult | None = None
@@ -611,22 +596,23 @@ class WorkflowEngine:
                 self._confidence_floor is not None
                 and result.confidence_score < self._confidence_floor
             ):
+                self._finalize(runtime, status="failed")
+                return
+            if result.confidence_score >= self._threshold:
                 break
-            if (
-                result.confidence_score >= self._threshold
-                or iteration_count >= self._max_iterations
-            ):
-                break
+            if iteration_count >= self._max_iterations:
+                self._finalize(runtime, status="failed")
+                return
 
         next_phase = _resolve_transition_target(
             phase.phase_id, "on_complete", targets, last_result.chosen_next
         )
         if next_phase is None:
-            self._finalize(runtime, completed=True)
+            self._finalize(runtime, status="completed")
             return
         self._transition_to(runtime, phase.phase_id, next_phase)
 
-    def _run_review(self, runtime: _SyncRuntime, phase: PhaseDefinition) -> None:
+    def _run_review(self, runtime: _Runtime, phase: PhaseDefinition) -> None:
         started_at = self._clock.now()
         result = self._invoker.invoke_reviewer(self._build_review_request(runtime, phase))
         _validate_role_output(
@@ -719,11 +705,11 @@ class WorkflowEngine:
         if payload.decision == "REQUEST_CHANGES":
             phase_cap = phase.max_feedback_rounds or self._max_feedback_rounds
             if runtime.state.feedback_loops >= phase_cap:
-                self._finalize(runtime, completed=False)
+                self._finalize(runtime, status="abandoned")
                 return
 
         if next_phase is None:
-            self._finalize(runtime, completed=True)
+            self._finalize(runtime, status="completed")
             return
         self._transition_to(runtime, phase.phase_id, next_phase)
 
@@ -808,10 +794,10 @@ class AsyncWorkflowEngine:
         if stored.state.status == "initialized":
             corrected = stored.state.model_copy(update={"started_at": await self._clock.now()})
             stored = StoredSession(state=corrected, revision=stored.revision)
-        runtime = _AsyncRuntime(stored, metadata, pack)
+        runtime = _Runtime(stored, metadata, pack)
 
         try:
-            if runtime.state.status in ("completed", "abandoned"):
+            if runtime.state.status in ("completed", "abandoned", "failed"):
                 return runtime.state
             self._invoker.validate(self._graph)
             self._graph.validate_against_pack(pack)
@@ -839,7 +825,7 @@ class AsyncWorkflowEngine:
                     else:
                         await self._run_review(runtime, phase)
             except _CancelRequested:
-                await self._finalize(runtime, completed=False)
+                await self._finalize(runtime, status="abandoned")
             except _StopRequested:
                 pass
 
@@ -864,7 +850,7 @@ class AsyncWorkflowEngine:
         except StateNotFoundError:
             return await self._state_store.initialize(metadata)
 
-    async def _save(self, runtime: _AsyncRuntime, state: SessionState) -> None:
+    async def _save(self, runtime: _Runtime, state: SessionState) -> None:
         runtime.stored = await self._state_store.save(
             state, expected_revision=runtime.stored.revision
         )
@@ -873,7 +859,7 @@ class AsyncWorkflowEngine:
         if self._observer is not None:
             await self._observer.on_event(event)
 
-    def _check_signal(self, runtime: _AsyncRuntime) -> None:
+    def _check_signal(self, runtime: _Runtime) -> None:
         """Check the run controller and raise ``_StopRequested`` if needed.
 
         Intentionally sync — ``RunController.check()`` is a lightweight flag
@@ -888,7 +874,7 @@ class AsyncWorkflowEngine:
             raise _CancelRequested()
         raise _StopRequested()
 
-    async def _start_run(self, runtime: _AsyncRuntime) -> None:
+    async def _start_run(self, runtime: _Runtime) -> None:
         state = runtime.state.model_copy(
             update={
                 "status": "in_progress",
@@ -919,7 +905,7 @@ class AsyncWorkflowEngine:
         )
 
     async def _transition_to(
-        self, runtime: _AsyncRuntime, from_phase_id: str, to_phase_id: str
+        self, runtime: _Runtime, from_phase_id: str, to_phase_id: str
     ) -> None:
         state = runtime.state.model_copy(update={"current_phase": to_phase_id})
         await self._save(runtime, state)
@@ -946,12 +932,11 @@ class AsyncWorkflowEngine:
             )
         )
 
-    async def _finalize(self, runtime: _AsyncRuntime, *, completed: bool) -> None:
+    async def _finalize(self, runtime: _Runtime, *, status: str) -> None:
         completed_at = await self._clock.now()
-        status = "completed" if completed else "abandoned"
         state = runtime.state.model_copy(update={"status": status, "completed_at": completed_at})
         await self._save(runtime, state)
-        if completed and self._context_pack_writer is not None and runtime.state.context_id:
+        if status == "completed" and self._context_pack_writer is not None and runtime.state.context_id:
             await self._context_pack_writer.finalize(runtime.state.context_id, approved=True)
         await self._emit(
             RunCompleted(
@@ -968,7 +953,7 @@ class AsyncWorkflowEngine:
         )
 
     async def _history_for_phase(
-        self, runtime: _AsyncRuntime, phase: PhaseDefinition
+        self, runtime: _Runtime, phase: PhaseDefinition
     ) -> WorkflowHistoryView:
         previous_decision: DecisionPayload | None = None
         for review in reversed(runtime.state.reviews):
@@ -989,7 +974,7 @@ class AsyncWorkflowEngine:
         )
 
     async def _build_execution_request(
-        self, runtime: _AsyncRuntime, phase: PhaseDefinition
+        self, runtime: _Runtime, phase: PhaseDefinition
     ) -> ExecutionRequest:
         scoped = _scope_context_pack(runtime.context_pack, phase)
         return ExecutionRequest(
@@ -1001,7 +986,7 @@ class AsyncWorkflowEngine:
         )
 
     async def _build_review_request(
-        self, runtime: _AsyncRuntime, phase: PhaseDefinition
+        self, runtime: _Runtime, phase: PhaseDefinition
     ) -> ReviewRequest:
         scoped = _scope_context_pack(runtime.context_pack, phase)
         return ReviewRequest(
@@ -1014,7 +999,7 @@ class AsyncWorkflowEngine:
             request_change_targets=self._graph.can_request_changes_from_targets(phase.phase_id),
         )
 
-    async def _run_executor(self, runtime: _AsyncRuntime, phase: PhaseDefinition) -> None:
+    async def _run_executor(self, runtime: _Runtime, phase: PhaseDefinition) -> None:
         targets = self._graph.on_complete_targets(phase.phase_id)
         iteration_count = _count_iterations(runtime.state, phase.phase_id)
         last_result: ExecutionResult | None = None
@@ -1102,22 +1087,23 @@ class AsyncWorkflowEngine:
                 self._confidence_floor is not None
                 and result.confidence_score < self._confidence_floor
             ):
+                await self._finalize(runtime, status="failed")
+                return
+            if result.confidence_score >= self._threshold:
                 break
-            if (
-                result.confidence_score >= self._threshold
-                or iteration_count >= self._max_iterations
-            ):
-                break
+            if iteration_count >= self._max_iterations:
+                await self._finalize(runtime, status="failed")
+                return
 
         next_phase = _resolve_transition_target(
             phase.phase_id, "on_complete", targets, last_result.chosen_next
         )
         if next_phase is None:
-            await self._finalize(runtime, completed=True)
+            await self._finalize(runtime, status="completed")
             return
         await self._transition_to(runtime, phase.phase_id, next_phase)
 
-    async def _run_review(self, runtime: _AsyncRuntime, phase: PhaseDefinition) -> None:
+    async def _run_review(self, runtime: _Runtime, phase: PhaseDefinition) -> None:
         review_idx = _count_reviews(runtime.state, phase.phase_id) + 1
 
         # --- Resume path: check for a previously committed human review ---
@@ -1260,17 +1246,17 @@ class AsyncWorkflowEngine:
         if payload.decision == "REQUEST_CHANGES":
             phase_cap = phase.max_feedback_rounds or self._max_feedback_rounds
             if runtime.state.feedback_loops >= phase_cap:
-                await self._finalize(runtime, completed=False)
+                await self._finalize(runtime, status="abandoned")
                 return
 
         if next_phase is None:
-            await self._finalize(runtime, completed=True)
+            await self._finalize(runtime, status="completed")
             return
         await self._transition_to(runtime, phase.phase_id, next_phase)
 
     async def _apply_committed_review(
         self,
-        runtime: _AsyncRuntime,
+        runtime: _Runtime,
         phase: PhaseDefinition,
         entry: ReviewEntry,
     ) -> None:
@@ -1299,7 +1285,7 @@ class AsyncWorkflowEngine:
             )
 
         if next_phase is None:
-            await self._finalize(runtime, completed=True)
+            await self._finalize(runtime, status="completed")
             return
         await self._transition_to(runtime, phase.phase_id, next_phase)
 
