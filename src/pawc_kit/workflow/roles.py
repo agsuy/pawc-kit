@@ -9,7 +9,6 @@ from pawc_kit.contracts.artifacts import DecisionPayload, FindingEntry, HandoffC
 from pawc_kit.contracts.discovery import QuestionRequest
 from pawc_kit.contracts.execution import ExecutionRequest, ReviewRequest
 from pawc_kit.contracts.state import ArtifactRef, IterationEntry, ReviewEntry
-from pawc_kit.workflow.graph import PhaseDefinition
 
 if TYPE_CHECKING:
     from pawc_kit.llm.backend import TokenUsage

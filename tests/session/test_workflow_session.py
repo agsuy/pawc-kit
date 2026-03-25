@@ -12,7 +12,6 @@ from pawc_kit.session import WorkflowSession
 from session.conftest import make_config as _config
 from session.conftest import simple_phases as _simple_phases
 
-
 # ---------------------------------------------------------------------------
 # Constructor -- graph resolution
 # ---------------------------------------------------------------------------
