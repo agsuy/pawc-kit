@@ -35,7 +35,9 @@ def _ensure_semver(v: str | None, *, required: bool) -> str | None:
 
 
 SemVerStr = Annotated[str, AfterValidator(lambda v: _ensure_semver(v, required=True))]
-OptionalSemVerStr = Annotated[str | None, AfterValidator(lambda v: _ensure_semver(v, required=False))]
+OptionalSemVerStr = Annotated[
+    str | None, AfterValidator(lambda v: _ensure_semver(v, required=False))
+]
 
 
 def validate_no_version_in_id(value: str, field_name: str) -> str:

@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from pawc_kit._versioning import NoVersionId, SemVerStr
+from pawc_kit._versioning import NoVersionId, OptionalSemVerStr, SemVerStr
 
 
 class ArtifactRef(BaseModel):
@@ -37,9 +37,9 @@ class IterationEntry(BaseModel):
     started_at: str | None = None
     artifacts: list[ArtifactRef] | None = None
     agent_id: NoVersionId = None
-    agent_version: str | None = None
+    agent_version: OptionalSemVerStr = None
     model_id: NoVersionId = None
-    model_version: str | None = None
+    model_version: OptionalSemVerStr = None
     handoff_context_ref: str | None = None
 
 
@@ -56,9 +56,9 @@ class ReviewEntry(BaseModel):
     summary: str | None = None
     findings_ref: str | None = None
     agent_id: NoVersionId = None
-    agent_version: str | None = None
+    agent_version: OptionalSemVerStr = None
     model_id: NoVersionId = None
-    model_version: str | None = None
+    model_version: OptionalSemVerStr = None
     counts_verified: bool | None = None
 
 
