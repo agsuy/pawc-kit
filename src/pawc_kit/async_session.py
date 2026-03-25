@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import warnings
 from pathlib import Path
 from typing import Any, Mapping, cast
 
 from pawc_kit._sentinel import UNSET, UnsetType
+from pawc_kit._session_config import _SessionConfig
 from pawc_kit.adapters.factory import build_async_observer
 from pawc_kit.adapters.fs.runtime import AsyncFsRuntimeBackend
 from pawc_kit.adapters.local_invoker import AsyncLocalRoleInvoker
 from pawc_kit.config import load_root_config
-from pawc_kit.context import ContextPack, load_context_pack
+from pawc_kit.context import ContextPack
 from pawc_kit.contracts.config import RootConfig
 from pawc_kit.contracts.errors import ConfigurationError
 from pawc_kit.contracts.state import SessionState
@@ -101,55 +101,29 @@ class AsyncWorkflowSession:
         confidence_floor: int | None | UnsetType = UNSET,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        self._config = config
-        wf = config.workflow
-        self._confidence_floor: int | None
-        self._observer: AsyncWorkflowObserver | None
+        self._sc = _SessionConfig.resolve(
+            config,
+            graph=graph,
+            run_directory=run_directory,
+            state_filename=state_filename,
+            confidence_threshold=confidence_threshold,
+            max_iterations=max_iterations,
+            max_feedback_rounds=max_feedback_rounds,
+            confidence_floor=confidence_floor,
+            metadata=metadata,
+        )
 
-        if graph is not None:
-            self._graph = graph
-        elif wf.phases:
-            self._graph = PhaseGraph.from_config(wf.phases)
-        else:
-            raise ConfigurationError(
-                "No workflow graph provided: pass graph= or define workflow.phases in config.yaml"
-            )
-
-        # --- Backend resolution -----------------------------------------------
-        if backend is not None and (run_directory is not None or state_filename is not None):
-            warnings.warn(
-                "run_directory and state_filename are ignored "
-                "when an explicit backend is provided.",
-                UserWarning,
-                stacklevel=2,
-            )
+        _SessionConfig.warn_backend_ignored(
+            backend, run_directory, state_filename
+        )
         self._backend = backend
 
-        # --- Layout resolution (used when building the default async FS backend) ---
-        self._run_directory = run_directory if run_directory is not None else wf.run_directory
-        self._state_filename = state_filename if state_filename is not None else wf.state_filename
-
-        self._confidence_threshold = (
-            confidence_threshold if confidence_threshold is not None else wf.confidence_threshold
-        )
-        self._max_iterations = max_iterations if max_iterations is not None else wf.max_iterations
-        self._max_feedback_rounds = (
-            max_feedback_rounds if max_feedback_rounds is not None else wf.max_feedback_rounds
-        )
-        # confidence_floor: None is a valid value (disabled). UNSET means "use config".
-        if confidence_floor is UNSET:
-            self._confidence_floor = wf.confidence_floor
-        else:
-            self._confidence_floor = cast(int | None, confidence_floor)
-
-        # observer: UNSET -> auto-construct from config.observability;
-        #           None   -> no observer; instance -> use it directly.
+        self._observer: AsyncWorkflowObserver | None
         if observer is UNSET:
             self._observer = build_async_observer(config.observability)
         else:
             self._observer = cast(AsyncWorkflowObserver | None, observer)
         self._clock = clock
-        self._metadata = metadata
         self._controller = controller
         self._explicit_invoker = invoker is not None
         self._invoker = invoker
@@ -158,25 +132,22 @@ class AsyncWorkflowSession:
     @property
     def config(self) -> RootConfig:
         """The validated root config."""
-        return self._config
+        return self._sc.config
 
-    def register_role(self, role_id: str, role: AsyncExecutor | AsyncReviewer) -> None:
+    def register_role(
+        self, role_id: str, role: AsyncExecutor | AsyncReviewer
+    ) -> None:
         """Bind an async role implementation to a role_id."""
         if self._explicit_invoker:
             raise ConfigurationError(
-                "register_role() is not supported when an explicit invoker is provided"
+                "register_role() is not supported when an explicit "
+                "invoker is provided"
             )
         self._role_bindings[role_id] = role
 
     def load_context(self, context_id: str) -> ContextPack:
         """Load a context pack using config's state_directory and max_composition_size."""
-        if not self._config.state_directory:
-            raise ConfigurationError("state_directory is required to load a context pack")
-        return load_context_pack(
-            self._config.state_directory,
-            context_id,
-            max_composition_size=self._config.context.max_composition_size,
-        )
+        return self._sc.load_context(context_id)
 
     async def run(
         self,
@@ -195,9 +166,9 @@ class AsyncWorkflowSession:
         omitted the engine uses an empty pack (no context data in prompts).
         """
         backend = self._backend or AsyncFsRuntimeBackend(
-            state_directory=self._config.state_directory or "",
-            run_directory=self._run_directory,
-            state_filename=self._state_filename,
+            state_directory=self._sc.config.state_directory or "",
+            run_directory=self._sc.run_directory,
+            state_filename=self._sc.state_filename,
         )
         resolved = await backend.resolve(session_id=session_id)
 
@@ -210,24 +181,24 @@ class AsyncWorkflowSession:
             async_invoker = local
 
         engine = AsyncWorkflowEngine(
-            graph=self._graph,
+            graph=self._sc.graph,
             state_store=resolved.state_store,
             artifact_store=resolved.artifact_store,
             observer=self._observer,
             clock=self._clock,
-            confidence_threshold=self._confidence_threshold,
-            max_iterations=self._max_iterations,
-            max_feedback_rounds=self._max_feedback_rounds,
-            confidence_floor=self._confidence_floor,
-            metadata=self._metadata,
+            confidence_threshold=self._sc.confidence_threshold,
+            max_iterations=self._sc.max_iterations,
+            max_feedback_rounds=self._sc.max_feedback_rounds,
+            confidence_floor=self._sc.confidence_floor,
+            metadata=self._sc.metadata,
             invoker=async_invoker,
             controller=self._controller,
         )
 
         return await engine.run(
             session_id=session_id,
-            skill_name=self._config.skill.name,
-            skill_version=self._config.skill.version,
+            skill_name=self._sc.config.skill.name,
+            skill_version=self._sc.config.skill.version,
             context_id=context_id,
             context_pack=context_pack,
         )

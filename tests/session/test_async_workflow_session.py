@@ -60,13 +60,13 @@ class MinimalAsyncWorker:
 def test_async_session_constructor_builds_graph_from_config() -> None:
     config = _config(phases=_simple_phases())
     session = AsyncWorkflowSession(config=config)
-    assert session._graph.phase_ids == ["work", "review"]
+    assert session._sc.graph.phase_ids == ["work", "review"]
 
 
 def test_async_session_constructor_uses_explicit_graph() -> None:
     graph = make_simple_graph()
     session = AsyncWorkflowSession(config=_config(), graph=graph)
-    assert session._graph is graph
+    assert session._sc.graph is graph
 
 
 def test_async_session_no_graph_raises() -> None:
@@ -83,14 +83,14 @@ def test_async_session_no_graph_raises() -> None:
 def test_async_session_threshold_from_config() -> None:
     config = _config(phases=_simple_phases(), confidence_threshold=70, max_iterations=5)
     session = AsyncWorkflowSession(config=config)
-    assert session._confidence_threshold == 70
-    assert session._max_iterations == 5
+    assert session._sc.confidence_threshold == 70
+    assert session._sc.max_iterations == 5
 
 
 def test_async_session_explicit_threshold_overrides() -> None:
     config = _config(phases=_simple_phases(), confidence_threshold=70)
     session = AsyncWorkflowSession(config=config, confidence_threshold=90)
-    assert session._confidence_threshold == 90
+    assert session._sc.confidence_threshold == 90
 
 
 # ---------------------------------------------------------------------------
@@ -101,13 +101,13 @@ def test_async_session_explicit_threshold_overrides() -> None:
 def test_async_from_config_loads_yaml(fixtures_dir: Path) -> None:
     session = AsyncWorkflowSession.from_config(fixtures_dir / "config.yaml")
     assert session.config.skill.name == "test-workflow"
-    assert session._graph.phase_ids == ["work", "review"]
+    assert session._sc.graph.phase_ids == ["work", "review"]
 
 
 def test_async_from_config_with_graph_override(fixtures_dir: Path) -> None:
     graph = make_simple_graph()
     session = AsyncWorkflowSession.from_config(fixtures_dir / "config.yaml", graph=graph)
-    assert session._graph is graph
+    assert session._sc.graph is graph
 
 
 # ---------------------------------------------------------------------------
