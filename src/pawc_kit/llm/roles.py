@@ -120,10 +120,17 @@ def _resolve_role_config(
         ) from exc
 
 
-class LLMExecutorRole(Executor):
+# ---------------------------------------------------------------------------
+# Shared mixin and helpers
+# ---------------------------------------------------------------------------
+
+
+class _LLMRoleBase:
+    """Shared init and prompt helpers for all LLM role classes."""
+
     def __init__(
         self,
-        backend: LLMBackend,
+        backend: LLMBackend | AsyncLLMBackend,
         role_configs: Mapping[str, RoleConfig] | None = None,
         *,
         efficiency: EfficiencyConfig | None = None,
@@ -144,11 +151,11 @@ class LLMExecutorRole(Executor):
         self.last_system_prompt: str | None = None
         self.last_user_prompt: str | None = None
 
-    def execute(self, req: ExecutionRequest) -> ExecutionResult:
+    def _assemble_executor(
+        self, req: ExecutionRequest
+    ) -> tuple[str, str]:
         role_config = _resolve_role_config(
-            req.phase.role_id,
-            self._role_configs,
-            req.phase.role_overrides,
+            req.phase.role_id, self._role_configs, req.phase.role_overrides
         )
         skip = _should_skip_schema(self._backend, self._efficiency)
         system, user = self._assembler.executor_prompts(
@@ -173,59 +180,24 @@ class LLMExecutorRole(Executor):
                 "pawc_user_prompt": user,
             },
         )
-        self.last_token_estimate = _estimate_tokens(self._backend, system, user)
-        structured = StructuredOutput(self._backend, max_retries=self._max_retries)
-        output = structured.call(system, user, ExecutorOutput)
-        self.last_usage = structured.last_usage
-        return ExecutionResult(
-            role_id=req.phase.role_id,
-            ended_at=utc_now(),
-            confidence_score=output.confidence_score,
-            summary=output.summary,
-            handoff=output.handoff,
-            artifacts=output.artifacts,
-            chosen_next=resolve_chosen_next(output.confidence_score, req.phase.routing),
-            usage=structured.last_usage,
+        self.last_token_estimate = _estimate_tokens(
+            self._backend, system, user
         )
+        return system, user
 
-
-class LLMReviewerRole(Reviewer):
-    def __init__(
+    def _assemble_reviewer(
         self,
-        backend: LLMBackend,
-        role_configs: Mapping[str, RoleConfig] | None = None,
-        *,
-        quality_gates: Mapping[str, object] | None = None,
-        efficiency: EfficiencyConfig | None = None,
-        injection: ContextInjectionConfig | None = None,
-        compressor: ContextCompressor | None = None,
-        prompt_assembler: PromptAssembler | None = None,
-        max_retries: int = 2,
-    ) -> None:
-        self._backend = backend
-        self._role_configs = role_configs or {}
-        self._quality_gates = dict(quality_gates or {})
-        self._efficiency = efficiency
-        self._injection = injection
-        self._compressor = compressor
-        self._assembler = prompt_assembler or DefaultPromptAssembler()
-        self._max_retries = max_retries
-        self.last_usage: TokenUsage | None = None
-        self.last_token_estimate: dict | None = None
-        self.last_system_prompt: str | None = None
-        self.last_user_prompt: str | None = None
-
-    def review(self, req: ReviewRequest) -> ReviewResult:
+        req: ReviewRequest,
+        quality_gates: dict[str, object],
+    ) -> tuple[str, str]:
         role_config = _resolve_role_config(
-            req.phase.role_id,
-            self._role_configs,
-            req.phase.role_overrides,
+            req.phase.role_id, self._role_configs, req.phase.role_overrides
         )
         skip = _should_skip_schema(self._backend, self._efficiency)
         system, user = self._assembler.reviewer_prompts(
             req,
             role_config,
-            quality_gates=dict(self._quality_gates),
+            quality_gates=quality_gates,
             efficiency=self._efficiency,
             injection=self._injection,
             compressor=self._compressor,
@@ -245,24 +217,117 @@ class LLMReviewerRole(Reviewer):
                 "pawc_user_prompt": user,
             },
         )
-        self.last_token_estimate = _estimate_tokens(self._backend, system, user)
-        structured = StructuredOutput(self._backend, max_retries=self._max_retries)
+        self.last_token_estimate = _estimate_tokens(
+            self._backend, system, user
+        )
+        return system, user
+
+
+def _enforce_quality_gates(
+    output: ReviewerOutput,
+    quality_gates: dict[str, object],
+) -> tuple[str, str | None]:
+    """Return ``(decision, gate_override_reason)``."""
+    decision = output.decision
+    gate_override_reason: str | None = None
+    if quality_gates and decision == "APPROVE":
+        critical_allowed = int(
+            str(quality_gates.get("critical_findings_allowed", 0))
+        )
+        high_allowed = int(
+            str(quality_gates.get("high_findings_allowed", 1))
+        )
+        passed, reason = check_quality_gates(
+            output.findings, critical_allowed, high_allowed
+        )
+        if not passed:
+            decision = "REQUEST_CHANGES"
+            gate_override_reason = f"Quality gate enforced: {reason}"
+    return decision, gate_override_reason
+
+
+# ---------------------------------------------------------------------------
+# Concrete role classes
+# ---------------------------------------------------------------------------
+
+
+class LLMExecutorRole(_LLMRoleBase, Executor):
+    def __init__(
+        self,
+        backend: LLMBackend,
+        role_configs: Mapping[str, RoleConfig] | None = None,
+        *,
+        efficiency: EfficiencyConfig | None = None,
+        injection: ContextInjectionConfig | None = None,
+        compressor: ContextCompressor | None = None,
+        prompt_assembler: PromptAssembler | None = None,
+        max_retries: int = 2,
+    ) -> None:
+        super().__init__(
+            backend, role_configs,
+            efficiency=efficiency, injection=injection,
+            compressor=compressor, prompt_assembler=prompt_assembler,
+            max_retries=max_retries,
+        )
+
+    def execute(self, req: ExecutionRequest) -> ExecutionResult:
+        system, user = self._assemble_executor(req)
+        structured = StructuredOutput(
+            self._backend, max_retries=self._max_retries  # type: ignore[arg-type]
+        )
+        output = structured.call(system, user, ExecutorOutput)
+        self.last_usage = structured.last_usage
+        return ExecutionResult(
+            role_id=req.phase.role_id,
+            ended_at=utc_now(),
+            confidence_score=output.confidence_score,
+            summary=output.summary,
+            handoff=output.handoff,
+            artifacts=output.artifacts,
+            chosen_next=resolve_chosen_next(
+                output.confidence_score, req.phase.routing
+            ),
+            usage=structured.last_usage,
+        )
+
+
+class LLMReviewerRole(_LLMRoleBase, Reviewer):
+    def __init__(
+        self,
+        backend: LLMBackend,
+        role_configs: Mapping[str, RoleConfig] | None = None,
+        *,
+        quality_gates: Mapping[str, object] | None = None,
+        efficiency: EfficiencyConfig | None = None,
+        injection: ContextInjectionConfig | None = None,
+        compressor: ContextCompressor | None = None,
+        prompt_assembler: PromptAssembler | None = None,
+        max_retries: int = 2,
+    ) -> None:
+        super().__init__(
+            backend, role_configs,
+            efficiency=efficiency, injection=injection,
+            compressor=compressor, prompt_assembler=prompt_assembler,
+            max_retries=max_retries,
+        )
+        self._quality_gates = dict(quality_gates or {})
+
+    def review(self, req: ReviewRequest) -> ReviewResult:
+        system, user = self._assemble_reviewer(req, dict(self._quality_gates))
+        structured = StructuredOutput(
+            self._backend, max_retries=self._max_retries  # type: ignore[arg-type]
+        )
         output = structured.call(system, user, ReviewerOutput)
         self.last_usage = structured.last_usage
-
-        decision = output.decision
-        gate_override_reason: str | None = None
-        if self._quality_gates and decision == "APPROVE":
-            critical_allowed = int(str(self._quality_gates.get("critical_findings_allowed", 0)))
-            high_allowed = int(str(self._quality_gates.get("high_findings_allowed", 1)))
-            passed, reason = check_quality_gates(output.findings, critical_allowed, high_allowed)
-            if not passed:
-                decision = "REQUEST_CHANGES"
-                gate_override_reason = f"Quality gate enforced: {reason}"
+        decision, gate_override_reason = _enforce_quality_gates(
+            output, self._quality_gates
+        )
 
         chosen_next: str | None = None
         if decision == "APPROVE":
-            chosen_next = resolve_chosen_next(output.confidence_score, req.phase.routing)
+            chosen_next = resolve_chosen_next(
+                output.confidence_score, req.phase.routing
+            )
 
         return ReviewResult(
             role_id=req.phase.role_id,
@@ -281,7 +346,7 @@ class LLMReviewerRole(Reviewer):
         )
 
 
-class AsyncLLMExecutorRole(AsyncExecutor):
+class AsyncLLMExecutorRole(_LLMRoleBase, AsyncExecutor):
     def __init__(
         self,
         backend: AsyncLLMBackend,
@@ -293,49 +358,18 @@ class AsyncLLMExecutorRole(AsyncExecutor):
         prompt_assembler: PromptAssembler | None = None,
         max_retries: int = 2,
     ) -> None:
-        self._backend = backend
-        self._role_configs = role_configs or {}
-        self._efficiency = efficiency
-        self._injection = injection
-        self._compressor = compressor
-        self._assembler = prompt_assembler or DefaultPromptAssembler()
-        self._max_retries = max_retries
-        self.last_usage: TokenUsage | None = None
-        self.last_token_estimate: dict | None = None
-        self.last_system_prompt: str | None = None
-        self.last_user_prompt: str | None = None
+        super().__init__(
+            backend, role_configs,
+            efficiency=efficiency, injection=injection,
+            compressor=compressor, prompt_assembler=prompt_assembler,
+            max_retries=max_retries,
+        )
 
     async def execute(self, req: ExecutionRequest) -> ExecutionResult:
-        role_config = _resolve_role_config(
-            req.phase.role_id,
-            self._role_configs,
-            req.phase.role_overrides,
+        system, user = self._assemble_executor(req)
+        structured = AsyncStructuredOutput(
+            self._backend, max_retries=self._max_retries  # type: ignore[arg-type]
         )
-        skip = _should_skip_schema(self._backend, self._efficiency)
-        system, user = self._assembler.executor_prompts(
-            req,
-            role_config,
-            efficiency=self._efficiency,
-            injection=self._injection,
-            compressor=self._compressor,
-            skip_schema=skip,
-            output_model=ExecutorOutput,
-        )
-        self.last_system_prompt = system
-        self.last_user_prompt = user
-        _logger.debug(
-            "Assembled executor prompt phase=%s role=%s",
-            req.phase.phase_id,
-            req.phase.role_id,
-            extra={
-                "pawc_phase_id": req.phase.phase_id,
-                "pawc_role_id": req.phase.role_id,
-                "pawc_system_prompt": system,
-                "pawc_user_prompt": user,
-            },
-        )
-        self.last_token_estimate = _estimate_tokens(self._backend, system, user)
-        structured = AsyncStructuredOutput(self._backend, max_retries=self._max_retries)
         output = await structured.call(system, user, ExecutorOutput)
         self.last_usage = structured.last_usage
         return ExecutionResult(
@@ -345,12 +379,14 @@ class AsyncLLMExecutorRole(AsyncExecutor):
             summary=output.summary,
             handoff=output.handoff,
             artifacts=output.artifacts,
-            chosen_next=resolve_chosen_next(output.confidence_score, req.phase.routing),
+            chosen_next=resolve_chosen_next(
+                output.confidence_score, req.phase.routing
+            ),
             usage=structured.last_usage,
         )
 
 
-class AsyncLLMReviewerRole(AsyncReviewer):
+class AsyncLLMReviewerRole(_LLMRoleBase, AsyncReviewer):
     def __init__(
         self,
         backend: AsyncLLMBackend,
@@ -363,67 +399,30 @@ class AsyncLLMReviewerRole(AsyncReviewer):
         prompt_assembler: PromptAssembler | None = None,
         max_retries: int = 2,
     ) -> None:
-        self._backend = backend
-        self._role_configs = role_configs or {}
+        super().__init__(
+            backend, role_configs,
+            efficiency=efficiency, injection=injection,
+            compressor=compressor, prompt_assembler=prompt_assembler,
+            max_retries=max_retries,
+        )
         self._quality_gates = dict(quality_gates or {})
-        self._efficiency = efficiency
-        self._injection = injection
-        self._compressor = compressor
-        self._assembler = prompt_assembler or DefaultPromptAssembler()
-        self._max_retries = max_retries
-        self.last_usage: TokenUsage | None = None
-        self.last_token_estimate: dict | None = None
-        self.last_system_prompt: str | None = None
-        self.last_user_prompt: str | None = None
 
     async def review(self, req: ReviewRequest) -> ReviewResult:
-        role_config = _resolve_role_config(
-            req.phase.role_id,
-            self._role_configs,
-            req.phase.role_overrides,
+        system, user = self._assemble_reviewer(req, dict(self._quality_gates))
+        structured = AsyncStructuredOutput(
+            self._backend, max_retries=self._max_retries  # type: ignore[arg-type]
         )
-        skip = _should_skip_schema(self._backend, self._efficiency)
-        system, user = self._assembler.reviewer_prompts(
-            req,
-            role_config,
-            quality_gates=dict(self._quality_gates),
-            efficiency=self._efficiency,
-            injection=self._injection,
-            compressor=self._compressor,
-            skip_schema=skip,
-            output_model=ReviewerOutput,
-        )
-        self.last_system_prompt = system
-        self.last_user_prompt = user
-        _logger.debug(
-            "Assembled reviewer prompt phase=%s role=%s",
-            req.phase.phase_id,
-            req.phase.role_id,
-            extra={
-                "pawc_phase_id": req.phase.phase_id,
-                "pawc_role_id": req.phase.role_id,
-                "pawc_system_prompt": system,
-                "pawc_user_prompt": user,
-            },
-        )
-        self.last_token_estimate = _estimate_tokens(self._backend, system, user)
-        structured = AsyncStructuredOutput(self._backend, max_retries=self._max_retries)
         output = await structured.call(system, user, ReviewerOutput)
         self.last_usage = structured.last_usage
-
-        decision = output.decision
-        gate_override_reason: str | None = None
-        if self._quality_gates and decision == "APPROVE":
-            critical_allowed = int(str(self._quality_gates.get("critical_findings_allowed", 0)))
-            high_allowed = int(str(self._quality_gates.get("high_findings_allowed", 1)))
-            passed, reason = check_quality_gates(output.findings, critical_allowed, high_allowed)
-            if not passed:
-                decision = "REQUEST_CHANGES"
-                gate_override_reason = f"Quality gate enforced: {reason}"
+        decision, gate_override_reason = _enforce_quality_gates(
+            output, self._quality_gates
+        )
 
         chosen_next: str | None = None
         if decision == "APPROVE":
-            chosen_next = resolve_chosen_next(output.confidence_score, req.phase.routing)
+            chosen_next = resolve_chosen_next(
+                output.confidence_score, req.phase.routing
+            )
 
         return ReviewResult(
             role_id=req.phase.role_id,
