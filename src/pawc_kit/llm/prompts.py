@@ -298,6 +298,11 @@ def role_section(role_config: RoleConfig | None) -> str:
     if role_config.review_criteria:
         parts.append("Review criteria:")
         parts.extend(f"- {item}" for item in role_config.review_criteria)
+    extra = role_config.model_extra or {}
+    finding_categories = extra.get("finding_categories")
+    if isinstance(finding_categories, (list, tuple)) and finding_categories:
+        parts.append("Allowed finding categories:")
+        parts.extend(f"- {item}" for item in finding_categories)
     return "\n".join(parts)
 
 

@@ -257,6 +257,20 @@ def test_role_section_none_returns_empty() -> None:
     assert role_section(None) == ""
 
 
+def test_role_section_finding_categories_from_model_extra() -> None:
+    cfg = RoleConfig.model_validate(
+        {
+            "name": "Reviewer",
+            "version": "1.0.0",
+            "finding_categories": ["security", "ux"],
+        }
+    )
+    section = role_section(cfg)
+    assert "Allowed finding categories:" in section
+    assert "- security" in section
+    assert "- ux" in section
+
+
 # ---------------------------------------------------------------------------
 # schema_instructions / abbreviated_schema
 # ---------------------------------------------------------------------------
