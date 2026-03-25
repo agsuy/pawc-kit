@@ -3,34 +3,18 @@
 from __future__ import annotations
 
 from pawc_kit._time import utc_now
-from pawc_kit.context import ContextPack
 from pawc_kit.contracts.execution import ExecutionRequest, ReviewRequest
-from pawc_kit.contracts.state import SessionState
 from pawc_kit.ports.artifacts import ArtifactReader
-from pawc_kit.workflow.graph import PhaseDefinition
 from pawc_kit.workflow.roles import (
     AsyncExecutor,
     AsyncReviewer,
-    ExecutionContext,
     ExecutionResult,
     Executor,
-    ReviewContext,
     ReviewDecision,
     Reviewer,
     ReviewResult,
     WorkflowHistoryView,
 )
-
-
-def _session() -> SessionState:
-    return SessionState(
-        session_id="s1",
-        skill_name="skill",
-        skill_version="1.0.0",
-        started_at="2026-01-01T00:00:00Z",
-        current_phase="work",
-        status="initialized",
-    )
 
 
 class _NullReader:
@@ -46,79 +30,6 @@ class _NullReader:
 def test_workflow_history_view_defaults() -> None:
     hv = WorkflowHistoryView(iterations=[], reviews=[])
     assert hv.previous_decision is None
-
-
-# ---------------------------------------------------------------------------
-# ExecutionContext
-# ---------------------------------------------------------------------------
-
-
-def test_execution_context_fields() -> None:
-    ctx = ExecutionContext(
-        session=_session(),
-        phase=PhaseDefinition(phase_id="work", role_id="worker", kind="executor"),
-        history=WorkflowHistoryView(iterations=[], reviews=[]),
-        artifacts=_NullReader(),
-        context=ContextPack.empty(),
-    )
-    assert ctx.session.session_id == "s1"
-    assert ctx.phase.phase_id == "work"
-    assert ctx.metadata is None
-
-
-def test_execution_context_with_metadata() -> None:
-    ctx = ExecutionContext(
-        session=_session(),
-        phase=PhaseDefinition(phase_id="work", role_id="worker", kind="executor"),
-        history=WorkflowHistoryView(iterations=[], reviews=[]),
-        artifacts=_NullReader(),
-        context=ContextPack.empty(),
-        metadata={"key": "value"},
-    )
-    assert ctx.metadata is not None
-    assert ctx.metadata["key"] == "value"
-
-
-def test_execution_context_context_field() -> None:
-    pack = ContextPack.empty()
-    ctx = ExecutionContext(
-        session=_session(),
-        phase=PhaseDefinition(phase_id="work", role_id="worker", kind="executor"),
-        history=WorkflowHistoryView(iterations=[], reviews=[]),
-        artifacts=_NullReader(),
-        context=pack,
-    )
-    assert ctx.context is pack
-
-
-# ---------------------------------------------------------------------------
-# ReviewContext
-# ---------------------------------------------------------------------------
-
-
-def test_review_context_defaults() -> None:
-    ctx = ReviewContext(
-        session=_session(),
-        phase=PhaseDefinition(phase_id="review", role_id="reviewer", kind="review"),
-        history=WorkflowHistoryView(iterations=[], reviews=[]),
-        artifacts=_NullReader(),
-        context=ContextPack.empty(),
-    )
-    assert ctx.approval_targets == []
-    assert ctx.request_change_targets == []
-
-
-def test_review_context_with_targets() -> None:
-    ctx = ReviewContext(
-        session=_session(),
-        phase=PhaseDefinition(phase_id="review", role_id="reviewer", kind="review"),
-        history=WorkflowHistoryView(iterations=[], reviews=[]),
-        artifacts=_NullReader(),
-        context=ContextPack.empty(),
-        approval_targets=["done"],
-        request_change_targets=["work"],
-    )
-    assert "work" in ctx.request_change_targets
 
 
 # ---------------------------------------------------------------------------

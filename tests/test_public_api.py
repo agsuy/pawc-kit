@@ -66,11 +66,9 @@ EXPECTED_ROOT_SYMBOLS = {
     "ReviewRequest",
     # Workflow
     "AsyncWorkflowEngine",
-    "ExecutionContext",
     "ExecutionResult",
     "PhaseDefinition",
     "PhaseGraph",
-    "ReviewContext",
     "ReviewDecision",
     "ReviewResult",
     "WorkflowEngine",
@@ -107,7 +105,7 @@ def test_all_exported_symbols_are_importable() -> None:
 
 def test_root_exports_exact_symbol_count() -> None:
     """Tight bound so accidental removals from __all__ fail the test."""
-    assert len(pawc_kit.__all__) == 114
+    assert len(pawc_kit.__all__) == 112
 
 
 # ---------------------------------------------------------------------------

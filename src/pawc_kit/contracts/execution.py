@@ -5,9 +5,7 @@ role implementations.  All fields are plain data (Pydantic models, dataclasses,
 or primitive types) with no live runtime references such as file handles or
 store connections.
 
-``ExecutionRequest`` and ``ReviewRequest`` replace the former ``ExecutionContext``
-and ``ReviewContext`` as the types passed to role ``execute()`` / ``review()``
-methods.  ``ContextPayload`` replaces ``ContextPack`` in role-facing contracts,
+``ContextPayload`` replaces ``ContextPack`` in role-facing contracts,
 stripping the filesystem ``Path`` field while preserving all data roles actually
 need.
 """
@@ -55,8 +53,7 @@ class ContextPayload:
 class ExecutionRequest:
     """Serializable input to an executor role invocation.
 
-    Replaces ``ExecutionContext``.  All fields are transport-safe: no live
-    artifact readers, no filesystem paths.
+    All fields are transport-safe: no live artifact readers, no filesystem paths.
     """
 
     session: SessionState
@@ -70,8 +67,7 @@ class ExecutionRequest:
 class ReviewRequest:
     """Serializable input to a reviewer role invocation.
 
-    Replaces ``ReviewContext``.  All fields are transport-safe: no live
-    artifact readers, no filesystem paths.
+    All fields are transport-safe: no live artifact readers, no filesystem paths.
     """
 
     session: SessionState
