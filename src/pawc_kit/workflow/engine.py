@@ -118,56 +118,41 @@ def _find_committed_human_review(
     return None
 
 
-def _resolve_transition_target(
+def _resolve_target(
     phase_id: str,
-    transition_name: str,
+    kind: str,
     targets: list[str],
-    chosen_next: str | None,
+    chosen: str | None,
+    *,
+    chosen_label: str = "chosen_next",
 ) -> str | None:
+    """Pick the next phase from *targets* given the role's *chosen* value.
+
+    *kind* identifies the transition for error messages (e.g. ``"on_complete"``,
+    ``"on_approve"``, ``"REQUEST_CHANGES"``).
+    *chosen_label* controls the parameter name shown in errors so that callers
+    using ``target_phase`` semantics keep their original messages.
+    """
     if not targets:
         return None
     if len(targets) == 1:
         target = targets[0]
-        if chosen_next is not None and chosen_next != target:
+        if chosen is not None and chosen != target:
             raise TransitionError(
-                f"{phase_id!r} returned chosen_next={chosen_next!r} "
-                f"but only {target!r} is valid for {transition_name}"
+                f"{phase_id!r} returned {chosen_label}={chosen!r} "
+                f"but only {target!r} is valid for {kind}"
             )
         return target
-    if chosen_next is None:
+    if chosen is None:
         raise TransitionError(
-            f"{phase_id!r} must provide chosen_next for multi-target {transition_name}: {targets}"
+            f"{phase_id!r} must provide {chosen_label} for multi-target {kind}: {targets}"
         )
-    if chosen_next not in targets:
+    if chosen not in targets:
         raise TransitionError(
-            f"{phase_id!r} returned invalid chosen_next={chosen_next!r} "
-            f"for {transition_name}; valid targets: {targets}"
+            f"{phase_id!r} returned invalid {chosen_label}={chosen!r} "
+            f"for {kind}; valid targets: {targets}"
         )
-    return chosen_next
-
-
-def _resolve_request_change_target(
-    phase_id: str, targets: list[str], target_phase: str | None
-) -> str | None:
-    if not targets:
-        return None
-    if len(targets) == 1:
-        target = targets[0]
-        if target_phase is not None and target_phase != target:
-            raise TransitionError(
-                f"{phase_id!r} returned target_phase={target_phase!r} "
-                f"but only {target!r} is valid for REQUEST_CHANGES"
-            )
-        return target
-    if target_phase is None:
-        raise TransitionError(
-            f"{phase_id!r} must provide target_phase for multi-target REQUEST_CHANGES: {targets}"
-        )
-    if target_phase not in targets:
-        raise TransitionError(
-            f"{phase_id!r} returned invalid target_phase={target_phase!r}; valid targets: {targets}"
-        )
-    return target_phase
+    return chosen
 
 
 def _clone_state(state: SessionState) -> SessionState:
@@ -604,7 +589,7 @@ class WorkflowEngine:
                 self._finalize(runtime, status="failed")
                 return
 
-        next_phase = _resolve_transition_target(
+        next_phase = _resolve_target(
             phase.phase_id, "on_complete", targets, last_result.chosen_next
         )
         if next_phase is None:
@@ -635,7 +620,7 @@ class WorkflowEngine:
         )
 
         if payload.decision == "APPROVE":
-            next_phase = _resolve_transition_target(
+            next_phase = _resolve_target(
                 phase.phase_id,
                 "on_approve",
                 self._graph.on_approve_targets(phase.phase_id),
@@ -643,10 +628,12 @@ class WorkflowEngine:
             )
             feedback_loops = runtime.state.feedback_loops
         else:
-            next_phase = _resolve_request_change_target(
+            next_phase = _resolve_target(
                 phase.phase_id,
+                "REQUEST_CHANGES",
                 self._graph.can_request_changes_from_targets(phase.phase_id),
                 payload.target_phase,
+                chosen_label="target_phase",
             )
             if next_phase is None:
                 raise TransitionError(
@@ -1095,7 +1082,7 @@ class AsyncWorkflowEngine:
                 await self._finalize(runtime, status="failed")
                 return
 
-        next_phase = _resolve_transition_target(
+        next_phase = _resolve_target(
             phase.phase_id, "on_complete", targets, last_result.chosen_next
         )
         if next_phase is None:
@@ -1176,7 +1163,7 @@ class AsyncWorkflowEngine:
         )
 
         if payload.decision == "APPROVE":
-            next_phase = _resolve_transition_target(
+            next_phase = _resolve_target(
                 phase.phase_id,
                 "on_approve",
                 self._graph.on_approve_targets(phase.phase_id),
@@ -1184,10 +1171,12 @@ class AsyncWorkflowEngine:
             )
             feedback_loops = runtime.state.feedback_loops
         else:
-            next_phase = _resolve_request_change_target(
+            next_phase = _resolve_target(
                 phase.phase_id,
+                "REQUEST_CHANGES",
                 self._graph.can_request_changes_from_targets(phase.phase_id),
                 payload.target_phase,
+                chosen_label="target_phase",
             )
             if next_phase is None:
                 raise TransitionError(
@@ -1262,17 +1251,19 @@ class AsyncWorkflowEngine:
     ) -> None:
         """Transition based on an already-committed review entry (human resume path)."""
         if entry.decision == "APPROVE":
-            next_phase = _resolve_transition_target(
+            next_phase = _resolve_target(
                 phase.phase_id,
                 "on_approve",
                 self._graph.on_approve_targets(phase.phase_id),
                 entry.target_phase,
             )
         elif entry.decision == "REQUEST_CHANGES":
-            next_phase = _resolve_request_change_target(
+            next_phase = _resolve_target(
                 phase.phase_id,
+                "REQUEST_CHANGES",
                 self._graph.can_request_changes_from_targets(phase.phase_id),
                 entry.target_phase,
+                chosen_label="target_phase",
             )
             if next_phase is None:
                 raise TransitionError(
