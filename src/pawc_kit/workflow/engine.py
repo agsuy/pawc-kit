@@ -39,6 +39,7 @@ from pawc_kit.workflow.roles import (
     ExecutionResult,
     Executor,
     Reviewer,
+    ReviewResult,
     WorkflowHistoryView,
 )
 
@@ -184,6 +185,266 @@ def _context_payload_from_pack(pack: ContextPack) -> ContextPayload:
         request_files=dict(pack.request_files),
         discovery_handoff=pack.discovery_handoff,
         children=[_context_payload_from_pack(child) for child in pack.children],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Pure-logic helpers shared by sync and async engines
+# ---------------------------------------------------------------------------
+
+
+def _start_run_state(
+    state: SessionState, metadata: Mapping[str, Any] | None
+) -> SessionState:
+    return state.model_copy(
+        update={
+            "status": "in_progress",
+            "run_metadata": (
+                dict(metadata) if metadata is not None else None
+            ),
+        }
+    )
+
+
+def _start_run_events(
+    runtime: _Runtime,
+    graph: PhaseGraph,
+    now: str,
+) -> tuple[RunStarted, PhaseStarted]:
+    state = runtime.state
+    phase_id = state.current_phase
+    return (
+        RunStarted(
+            session_id=state.session_id,
+            skill_name=state.skill_name,
+            phase_id=phase_id,
+            role_id=graph.get(phase_id).role_id,
+            revision=runtime.stored.revision,
+            occurred_at=now,
+        ),
+        PhaseStarted(
+            session_id=state.session_id,
+            phase_id=phase_id,
+            role_id=graph.get(phase_id).role_id,
+            phase_kind=graph.phase_kind(phase_id),
+            revision=runtime.stored.revision,
+            occurred_at=now,
+        ),
+    )
+
+
+def _transition_events(
+    runtime: _Runtime,
+    graph: PhaseGraph,
+    from_phase_id: str,
+    to_phase_id: str,
+    now: str,
+) -> tuple[PhaseTransitioned, PhaseStarted]:
+    return (
+        PhaseTransitioned(
+            session_id=runtime.state.session_id,
+            from_phase_id=from_phase_id,
+            from_role_id=graph.get(from_phase_id).role_id,
+            to_phase_id=to_phase_id,
+            to_role_id=graph.get(to_phase_id).role_id,
+            revision=runtime.stored.revision,
+            occurred_at=now,
+        ),
+        PhaseStarted(
+            session_id=runtime.state.session_id,
+            phase_id=to_phase_id,
+            role_id=graph.get(to_phase_id).role_id,
+            phase_kind=graph.phase_kind(to_phase_id),
+            revision=runtime.stored.revision,
+            occurred_at=now,
+        ),
+    )
+
+
+def _finalize_state(
+    state: SessionState,
+    status: str,
+    completed_at: str,
+) -> SessionState:
+    return state.model_copy(
+        update={"status": status, "completed_at": completed_at}
+    )
+
+
+def _finalize_event(
+    runtime: _Runtime,
+    status: str,
+    completed_at: str,
+) -> RunCompleted:
+    return RunCompleted(
+        session_id=runtime.state.session_id,
+        status=status,
+        feedback_loops=runtime.state.feedback_loops,
+        revision=runtime.stored.revision,
+        started_at=runtime.state.started_at,
+        completed_at=completed_at,
+        total_prompt_tokens=runtime.total_prompt_tokens,
+        total_completion_tokens=runtime.total_completion_tokens,
+        total_tokens=runtime.total_tokens,
+    )
+
+
+def _build_iteration_entry(
+    state: SessionState,
+    phase: PhaseDefinition,
+    result: ExecutionResult,
+    started_at: str,
+    handoff_ref_str: str | None,
+) -> IterationEntry:
+    return IterationEntry(
+        iteration=_count_iterations(state, phase.phase_id) + 1,
+        phase_id=phase.phase_id,
+        role_id=result.role_id,
+        confidence_score=result.confidence_score,
+        started_at=started_at,
+        ended_at=result.ended_at,
+        summary=result.summary,
+        artifacts=list(result.artifacts),
+        handoff_context_ref=handoff_ref_str,
+    )
+
+
+def _commit_iteration_state(
+    state: SessionState, entry: IterationEntry
+) -> SessionState:
+    return state.model_copy(
+        update={"phase_iterations": [*state.phase_iterations, entry]}
+    )
+
+
+def _iteration_committed_event(
+    runtime: _Runtime,
+    phase: PhaseDefinition,
+    entry: IterationEntry,
+    result: ExecutionResult,
+    started_at: str,
+) -> IterationCommitted:
+    return IterationCommitted(
+        session_id=runtime.state.session_id,
+        phase_id=phase.phase_id,
+        role_id=result.role_id,
+        iteration=entry.iteration,
+        confidence_score=entry.confidence_score,
+        feedback_loops=runtime.state.feedback_loops,
+        revision=runtime.stored.revision,
+        started_at=started_at,
+        ended_at=result.ended_at,
+        chosen_next=result.chosen_next,
+        handoff_context_ref=entry.handoff_context_ref,
+        **_token_event_kwargs(result.usage),
+    )
+
+
+def _make_decision_payload(
+    phase: PhaseDefinition, result: "ReviewResult"
+) -> DecisionPayload:
+    return DecisionPayload(
+        phase_id=phase.phase_id,
+        role_id=result.role_id,
+        decision=result.decision.decision,
+        confidence_score=result.decision.confidence_score,
+        counts_verified=result.decision.counts_verified,
+        summary=result.decision.summary,
+        ended_at=result.ended_at,
+        findings=result.decision.findings,
+        target_phase=result.decision.target_phase,
+    )
+
+
+def _resolve_review_transition(
+    phase: PhaseDefinition,
+    graph: PhaseGraph,
+    payload: DecisionPayload,
+    chosen_next: str | None,
+) -> tuple[str | None, int]:
+    """Return ``(next_phase, feedback_loops_delta)``."""
+    if payload.decision == "APPROVE":
+        next_phase = _resolve_target(
+            phase.phase_id,
+            "on_approve",
+            graph.on_approve_targets(phase.phase_id),
+            chosen_next,
+        )
+        return next_phase, 0
+    next_phase = _resolve_target(
+        phase.phase_id,
+        "REQUEST_CHANGES",
+        graph.can_request_changes_from_targets(phase.phase_id),
+        payload.target_phase,
+        chosen_label="target_phase",
+    )
+    if next_phase is None:
+        raise TransitionError(
+            f"{phase.phase_id!r} cannot REQUEST_CHANGES without "
+            "can_request_changes_from targets"
+        )
+    return next_phase, 1
+
+
+def _build_review_entry(
+    state: SessionState,
+    phase: PhaseDefinition,
+    payload: DecisionPayload,
+    decision_ref_str: str,
+    review_idx: int | None = None,
+) -> ReviewEntry:
+    idx = review_idx or (_count_reviews(state, phase.phase_id) + 1)
+    return ReviewEntry(
+        review=idx,
+        phase_id=phase.phase_id,
+        role_id=payload.role_id,
+        decision=payload.decision,
+        target_phase=payload.target_phase,
+        confidence_score=payload.confidence_score,
+        summary=payload.summary,
+        ended_at=payload.ended_at,
+        findings_ref=decision_ref_str,
+        counts_verified=payload.counts_verified,
+    )
+
+
+def _commit_review_state(
+    state: SessionState,
+    review_entry: ReviewEntry,
+    feedback_loops: int,
+) -> SessionState:
+    return state.model_copy(
+        update={
+            "reviews": [*state.reviews, review_entry],
+            "feedback_loops": feedback_loops,
+        }
+    )
+
+
+def _review_committed_event(
+    runtime: _Runtime,
+    phase: PhaseDefinition,
+    review_entry: ReviewEntry,
+    payload: DecisionPayload,
+    result: "ReviewResult",
+    started_at: str,
+    decision_ref_str: str,
+) -> ReviewCommitted:
+    return ReviewCommitted(
+        session_id=runtime.state.session_id,
+        phase_id=phase.phase_id,
+        role_id=result.role_id,
+        review=review_entry.review,
+        decision=payload.decision,
+        confidence_score=payload.confidence_score,
+        feedback_loops=runtime.state.feedback_loops,
+        revision=runtime.stored.revision,
+        started_at=started_at,
+        ended_at=result.ended_at,
+        target_phase=payload.target_phase,
+        chosen_next=result.chosen_next,
+        findings_ref=decision_ref_str,
+        **_token_event_kwargs(result.usage),
     )
 
 
@@ -397,77 +658,28 @@ class WorkflowEngine:
         raise _StopRequested()
 
     def _start_run(self, runtime: _Runtime) -> None:
-        state = runtime.state.model_copy(
-            update={
-                "status": "in_progress",
-                "run_metadata": (dict(self._metadata) if self._metadata is not None else None),
-            }
-        )
+        state = _start_run_state(runtime.state, self._metadata)
         self._save(runtime, state)
-        self._emit(
-            RunStarted(
-                session_id=runtime.state.session_id,
-                skill_name=runtime.state.skill_name,
-                phase_id=runtime.state.current_phase,
-                role_id=self._graph.get(runtime.state.current_phase).role_id,
-                revision=runtime.stored.revision,
-                occurred_at=self._clock.now(),
-            )
-        )
-        self._emit(
-            PhaseStarted(
-                session_id=runtime.state.session_id,
-                phase_id=runtime.state.current_phase,
-                role_id=self._graph.get(runtime.state.current_phase).role_id,
-                phase_kind=self._graph.phase_kind(runtime.state.current_phase),
-                revision=runtime.stored.revision,
-                occurred_at=self._clock.now(),
-            )
-        )
+        now = self._clock.now()
+        run_evt, phase_evt = _start_run_events(runtime, self._graph, now)
+        self._emit(run_evt)
+        self._emit(phase_evt)
 
     def _transition_to(self, runtime: _Runtime, from_phase_id: str, to_phase_id: str) -> None:
         state = runtime.state.model_copy(update={"current_phase": to_phase_id})
         self._save(runtime, state)
         now = self._clock.now()
-        self._emit(
-            PhaseTransitioned(
-                session_id=runtime.state.session_id,
-                from_phase_id=from_phase_id,
-                from_role_id=self._graph.get(from_phase_id).role_id,
-                to_phase_id=to_phase_id,
-                to_role_id=self._graph.get(to_phase_id).role_id,
-                revision=runtime.stored.revision,
-                occurred_at=now,
-            )
+        trans_evt, phase_evt = _transition_events(
+            runtime, self._graph, from_phase_id, to_phase_id, now
         )
-        self._emit(
-            PhaseStarted(
-                session_id=runtime.state.session_id,
-                phase_id=to_phase_id,
-                role_id=self._graph.get(to_phase_id).role_id,
-                phase_kind=self._graph.phase_kind(to_phase_id),
-                revision=runtime.stored.revision,
-                occurred_at=now,
-            )
-        )
+        self._emit(trans_evt)
+        self._emit(phase_evt)
 
     def _finalize(self, runtime: _Runtime, *, status: str) -> None:
         completed_at = self._clock.now()
-        state = runtime.state.model_copy(update={"status": status, "completed_at": completed_at})
+        state = _finalize_state(runtime.state, status, completed_at)
         self._save(runtime, state)
-        self._emit(
-            RunCompleted(
-                session_id=runtime.state.session_id,
-                status=status,
-                feedback_loops=runtime.state.feedback_loops,
-                revision=runtime.stored.revision,
-                started_at=runtime.state.started_at,
-                completed_at=completed_at,
-                total_prompt_tokens=runtime.total_prompt_tokens,
-                total_completion_tokens=runtime.total_completion_tokens,
-                total_tokens=runtime.total_tokens,
-            )
-        )
+        self._emit(_finalize_event(runtime, status, completed_at))
 
     def _history_for_phase(
         self, runtime: _Runtime, phase: PhaseDefinition
@@ -525,53 +737,25 @@ class WorkflowEngine:
             result = self._invoker.invoke_executor(self._build_execution_request(runtime, phase))
             last_result = result
             _validate_role_output(
-                phase,
-                role_id=result.role_id,
-                started_at=started_at,
-                ended_at=result.ended_at,
+                phase, role_id=result.role_id, started_at=started_at, ended_at=result.ended_at,
             )
 
             handoff_ref = None
             if result.handoff is not None:
                 handoff_ref = self._artifact_store.save_handoff(
-                    runtime.state.session_id,
-                    phase.phase_id,
-                    result.role_id,
-                    _count_iterations(runtime.state, phase.phase_id) + 1,
-                    result.handoff,
+                    runtime.state.session_id, phase.phase_id, result.role_id,
+                    _count_iterations(runtime.state, phase.phase_id) + 1, result.handoff,
                 )
 
-            entry = IterationEntry(
-                iteration=_count_iterations(runtime.state, phase.phase_id) + 1,
-                phase_id=phase.phase_id,
-                role_id=result.role_id,
-                confidence_score=result.confidence_score,
-                started_at=started_at,
-                ended_at=result.ended_at,
-                summary=result.summary,
-                artifacts=list(result.artifacts),
-                handoff_context_ref=handoff_ref.ref if handoff_ref else None,
+            entry = _build_iteration_entry(
+                runtime.state, phase, result, started_at,
+                handoff_ref.ref if handoff_ref else None,
             )
-            state = runtime.state.model_copy(
-                update={"phase_iterations": [*runtime.state.phase_iterations, entry]}
-            )
+            state = _commit_iteration_state(runtime.state, entry)
             self._save(runtime, state)
             _accumulate_runtime_usage(runtime, result.usage)
             self._emit(
-                IterationCommitted(
-                    session_id=runtime.state.session_id,
-                    phase_id=phase.phase_id,
-                    role_id=result.role_id,
-                    iteration=entry.iteration,
-                    confidence_score=entry.confidence_score,
-                    feedback_loops=runtime.state.feedback_loops,
-                    revision=runtime.stored.revision,
-                    started_at=started_at,
-                    ended_at=result.ended_at,
-                    chosen_next=result.chosen_next,
-                    handoff_context_ref=entry.handoff_context_ref,
-                    **_token_event_kwargs(result.usage),
-                )
+                _iteration_committed_event(runtime, phase, entry, result, started_at)
             )
 
             iteration_count += 1
@@ -601,90 +785,28 @@ class WorkflowEngine:
         started_at = self._clock.now()
         result = self._invoker.invoke_reviewer(self._build_review_request(runtime, phase))
         _validate_role_output(
-            phase,
-            role_id=result.role_id,
-            started_at=started_at,
-            ended_at=result.ended_at,
+            phase, role_id=result.role_id, started_at=started_at, ended_at=result.ended_at,
         )
 
-        payload = DecisionPayload(
-            phase_id=phase.phase_id,
-            role_id=result.role_id,
-            decision=result.decision.decision,
-            confidence_score=result.decision.confidence_score,
-            counts_verified=result.decision.counts_verified,
-            summary=result.decision.summary,
-            ended_at=result.ended_at,
-            findings=result.decision.findings,
-            target_phase=result.decision.target_phase,
+        payload = _make_decision_payload(phase, result)
+        next_phase, fb_delta = _resolve_review_transition(
+            phase, self._graph, payload, result.chosen_next,
         )
+        feedback_loops = runtime.state.feedback_loops + fb_delta
 
-        if payload.decision == "APPROVE":
-            next_phase = _resolve_target(
-                phase.phase_id,
-                "on_approve",
-                self._graph.on_approve_targets(phase.phase_id),
-                result.chosen_next,
-            )
-            feedback_loops = runtime.state.feedback_loops
-        else:
-            next_phase = _resolve_target(
-                phase.phase_id,
-                "REQUEST_CHANGES",
-                self._graph.can_request_changes_from_targets(phase.phase_id),
-                payload.target_phase,
-                chosen_label="target_phase",
-            )
-            if next_phase is None:
-                raise TransitionError(
-                    f"{phase.phase_id!r} cannot REQUEST_CHANGES without "
-                    "can_request_changes_from targets"
-                )
-            feedback_loops = runtime.state.feedback_loops + 1
-
+        review_idx = _count_reviews(runtime.state, phase.phase_id) + 1
         decision_ref = self._artifact_store.save_decision(
-            runtime.state.session_id,
-            phase.phase_id,
-            result.role_id,
-            _count_reviews(runtime.state, phase.phase_id) + 1,
-            payload,
+            runtime.state.session_id, phase.phase_id, result.role_id, review_idx, payload,
         )
-        review_entry = ReviewEntry(
-            review=_count_reviews(runtime.state, phase.phase_id) + 1,
-            phase_id=phase.phase_id,
-            role_id=result.role_id,
-            decision=payload.decision,
-            target_phase=payload.target_phase,
-            confidence_score=payload.confidence_score,
-            summary=payload.summary,
-            ended_at=payload.ended_at,
-            findings_ref=decision_ref.ref,
-            counts_verified=payload.counts_verified,
+        review_entry = _build_review_entry(
+            runtime.state, phase, payload, decision_ref.ref, review_idx,
         )
-        state = runtime.state.model_copy(
-            update={
-                "reviews": [*runtime.state.reviews, review_entry],
-                "feedback_loops": feedback_loops,
-            }
-        )
+        state = _commit_review_state(runtime.state, review_entry, feedback_loops)
         self._save(runtime, state)
         _accumulate_runtime_usage(runtime, result.usage)
         self._emit(
-            ReviewCommitted(
-                session_id=runtime.state.session_id,
-                phase_id=phase.phase_id,
-                role_id=result.role_id,
-                review=review_entry.review,
-                decision=payload.decision,
-                confidence_score=payload.confidence_score,
-                feedback_loops=runtime.state.feedback_loops,
-                revision=runtime.stored.revision,
-                started_at=started_at,
-                ended_at=result.ended_at,
-                target_phase=payload.target_phase,
-                chosen_next=result.chosen_next,
-                findings_ref=decision_ref.ref,
-                **_token_event_kwargs(result.usage),
+            _review_committed_event(
+                runtime, phase, review_entry, payload, result, started_at, decision_ref.ref,
             )
         )
         self._check_signal(runtime)
@@ -862,34 +984,12 @@ class AsyncWorkflowEngine:
         raise _StopRequested()
 
     async def _start_run(self, runtime: _Runtime) -> None:
-        state = runtime.state.model_copy(
-            update={
-                "status": "in_progress",
-                "run_metadata": (dict(self._metadata) if self._metadata is not None else None),
-            }
-        )
+        state = _start_run_state(runtime.state, self._metadata)
         await self._save(runtime, state)
         now = await self._clock.now()
-        await self._emit(
-            RunStarted(
-                session_id=runtime.state.session_id,
-                skill_name=runtime.state.skill_name,
-                phase_id=runtime.state.current_phase,
-                role_id=self._graph.get(runtime.state.current_phase).role_id,
-                revision=runtime.stored.revision,
-                occurred_at=now,
-            )
-        )
-        await self._emit(
-            PhaseStarted(
-                session_id=runtime.state.session_id,
-                phase_id=runtime.state.current_phase,
-                role_id=self._graph.get(runtime.state.current_phase).role_id,
-                phase_kind=self._graph.phase_kind(runtime.state.current_phase),
-                revision=runtime.stored.revision,
-                occurred_at=now,
-            )
-        )
+        run_evt, phase_evt = _start_run_events(runtime, self._graph, now)
+        await self._emit(run_evt)
+        await self._emit(phase_evt)
 
     async def _transition_to(
         self, runtime: _Runtime, from_phase_id: str, to_phase_id: str
@@ -897,47 +997,25 @@ class AsyncWorkflowEngine:
         state = runtime.state.model_copy(update={"current_phase": to_phase_id})
         await self._save(runtime, state)
         now = await self._clock.now()
-        await self._emit(
-            PhaseTransitioned(
-                session_id=runtime.state.session_id,
-                from_phase_id=from_phase_id,
-                from_role_id=self._graph.get(from_phase_id).role_id,
-                to_phase_id=to_phase_id,
-                to_role_id=self._graph.get(to_phase_id).role_id,
-                revision=runtime.stored.revision,
-                occurred_at=now,
-            )
+        trans_evt, phase_evt = _transition_events(
+            runtime, self._graph, from_phase_id, to_phase_id, now
         )
-        await self._emit(
-            PhaseStarted(
-                session_id=runtime.state.session_id,
-                phase_id=to_phase_id,
-                role_id=self._graph.get(to_phase_id).role_id,
-                phase_kind=self._graph.phase_kind(to_phase_id),
-                revision=runtime.stored.revision,
-                occurred_at=now,
-            )
-        )
+        await self._emit(trans_evt)
+        await self._emit(phase_evt)
 
     async def _finalize(self, runtime: _Runtime, *, status: str) -> None:
         completed_at = await self._clock.now()
-        state = runtime.state.model_copy(update={"status": status, "completed_at": completed_at})
+        state = _finalize_state(runtime.state, status, completed_at)
         await self._save(runtime, state)
-        if status == "completed" and self._context_pack_writer is not None and runtime.state.context_id:
-            await self._context_pack_writer.finalize(runtime.state.context_id, approved=True)
-        await self._emit(
-            RunCompleted(
-                session_id=runtime.state.session_id,
-                status=status,
-                feedback_loops=runtime.state.feedback_loops,
-                revision=runtime.stored.revision,
-                started_at=runtime.state.started_at,
-                completed_at=completed_at,
-                total_prompt_tokens=runtime.total_prompt_tokens,
-                total_completion_tokens=runtime.total_completion_tokens,
-                total_tokens=runtime.total_tokens,
+        if (
+            status == "completed"
+            and self._context_pack_writer is not None
+            and runtime.state.context_id
+        ):
+            await self._context_pack_writer.finalize(
+                runtime.state.context_id, approved=True
             )
-        )
+        await self._emit(_finalize_event(runtime, status, completed_at))
 
     async def _history_for_phase(
         self, runtime: _Runtime, phase: PhaseDefinition
@@ -999,53 +1077,25 @@ class AsyncWorkflowEngine:
             )
             last_result = result
             _validate_role_output(
-                phase,
-                role_id=result.role_id,
-                started_at=started_at,
-                ended_at=result.ended_at,
+                phase, role_id=result.role_id, started_at=started_at, ended_at=result.ended_at,
             )
 
             handoff_ref = None
             if result.handoff is not None:
                 handoff_ref = await self._artifact_store.save_handoff(
-                    runtime.state.session_id,
-                    phase.phase_id,
-                    result.role_id,
-                    _count_iterations(runtime.state, phase.phase_id) + 1,
-                    result.handoff,
+                    runtime.state.session_id, phase.phase_id, result.role_id,
+                    _count_iterations(runtime.state, phase.phase_id) + 1, result.handoff,
                 )
 
-            entry = IterationEntry(
-                iteration=_count_iterations(runtime.state, phase.phase_id) + 1,
-                phase_id=phase.phase_id,
-                role_id=result.role_id,
-                confidence_score=result.confidence_score,
-                started_at=started_at,
-                ended_at=result.ended_at,
-                summary=result.summary,
-                artifacts=list(result.artifacts),
-                handoff_context_ref=handoff_ref.ref if handoff_ref else None,
+            entry = _build_iteration_entry(
+                runtime.state, phase, result, started_at,
+                handoff_ref.ref if handoff_ref else None,
             )
-            state = runtime.state.model_copy(
-                update={"phase_iterations": [*runtime.state.phase_iterations, entry]}
-            )
+            state = _commit_iteration_state(runtime.state, entry)
             await self._save(runtime, state)
             _accumulate_runtime_usage(runtime, result.usage)
             await self._emit(
-                IterationCommitted(
-                    session_id=runtime.state.session_id,
-                    phase_id=phase.phase_id,
-                    role_id=result.role_id,
-                    iteration=entry.iteration,
-                    confidence_score=entry.confidence_score,
-                    feedback_loops=runtime.state.feedback_loops,
-                    revision=runtime.stored.revision,
-                    started_at=started_at,
-                    ended_at=result.ended_at,
-                    chosen_next=result.chosen_next,
-                    handoff_context_ref=entry.handoff_context_ref,
-                    **_token_event_kwargs(result.usage),
-                )
+                _iteration_committed_event(runtime, phase, entry, result, started_at)
             )
 
             if result.pending_question is not None:
@@ -1150,84 +1200,24 @@ class AsyncWorkflowEngine:
             ended_at=result.ended_at,
         )
 
-        payload = DecisionPayload(
-            phase_id=phase.phase_id,
-            role_id=result.role_id,
-            decision=result.decision.decision,
-            confidence_score=result.decision.confidence_score,
-            counts_verified=result.decision.counts_verified,
-            summary=result.decision.summary,
-            ended_at=result.ended_at,
-            findings=result.decision.findings,
-            target_phase=result.decision.target_phase,
+        payload = _make_decision_payload(phase, result)
+        next_phase, fb_delta = _resolve_review_transition(
+            phase, self._graph, payload, result.chosen_next,
         )
-
-        if payload.decision == "APPROVE":
-            next_phase = _resolve_target(
-                phase.phase_id,
-                "on_approve",
-                self._graph.on_approve_targets(phase.phase_id),
-                result.chosen_next,
-            )
-            feedback_loops = runtime.state.feedback_loops
-        else:
-            next_phase = _resolve_target(
-                phase.phase_id,
-                "REQUEST_CHANGES",
-                self._graph.can_request_changes_from_targets(phase.phase_id),
-                payload.target_phase,
-                chosen_label="target_phase",
-            )
-            if next_phase is None:
-                raise TransitionError(
-                    f"{phase.phase_id!r} cannot REQUEST_CHANGES without "
-                    "can_request_changes_from targets"
-                )
-            feedback_loops = runtime.state.feedback_loops + 1
+        feedback_loops = runtime.state.feedback_loops + fb_delta
 
         decision_ref = await self._artifact_store.save_decision(
-            runtime.state.session_id,
-            phase.phase_id,
-            result.role_id,
-            review_idx,
-            payload,
+            runtime.state.session_id, phase.phase_id, result.role_id, review_idx, payload,
         )
-        review_entry = ReviewEntry(
-            review=review_idx,
-            phase_id=phase.phase_id,
-            role_id=result.role_id,
-            decision=payload.decision,
-            target_phase=payload.target_phase,
-            confidence_score=payload.confidence_score,
-            summary=payload.summary,
-            ended_at=payload.ended_at,
-            findings_ref=decision_ref.ref,
-            counts_verified=payload.counts_verified,
+        review_entry = _build_review_entry(
+            runtime.state, phase, payload, decision_ref.ref, review_idx,
         )
-        state = runtime.state.model_copy(
-            update={
-                "reviews": [*runtime.state.reviews, review_entry],
-                "feedback_loops": feedback_loops,
-            }
-        )
+        state = _commit_review_state(runtime.state, review_entry, feedback_loops)
         await self._save(runtime, state)
         _accumulate_runtime_usage(runtime, result.usage)
         await self._emit(
-            ReviewCommitted(
-                session_id=runtime.state.session_id,
-                phase_id=phase.phase_id,
-                role_id=result.role_id,
-                review=review_entry.review,
-                decision=payload.decision,
-                confidence_score=payload.confidence_score,
-                feedback_loops=runtime.state.feedback_loops,
-                revision=runtime.stored.revision,
-                started_at=started_at,
-                ended_at=result.ended_at,
-                target_phase=payload.target_phase,
-                chosen_next=result.chosen_next,
-                findings_ref=decision_ref.ref,
-                **_token_event_kwargs(result.usage),
+            _review_committed_event(
+                runtime, phase, review_entry, payload, result, started_at, decision_ref.ref,
             )
         )
         self._check_signal(runtime)
