@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
-from pawc_kit._versioning import OptionalSemVerStr, validate_no_version_in_id
+from pawc_kit._versioning import OptionalSemVerStr, RequiredNoVersionId
 
 
 class CompositionEntry(BaseModel):
@@ -16,27 +16,17 @@ class CompositionEntry(BaseModel):
 class AgentUsedEntry(BaseModel):
     """Agent that contributed to the context."""
 
-    agent_id: str
+    agent_id: RequiredNoVersionId
     agent_version: OptionalSemVerStr = None
     role: str | None = None
-
-    @field_validator("agent_id")
-    @classmethod
-    def _check_agent_id(cls, value: str) -> str:
-        return validate_no_version_in_id(value, "agent_id")
 
 
 class ModelUsedEntry(BaseModel):
     """Model that contributed to the context."""
 
-    model_id: str
+    model_id: RequiredNoVersionId
     model_version: OptionalSemVerStr = None
     role: str | None = None
-
-    @field_validator("model_id")
-    @classmethod
-    def _check_model_id(cls, value: str) -> str:
-        return validate_no_version_in_id(value, "model_id")
 
 
 class ContextMetadata(BaseModel):
