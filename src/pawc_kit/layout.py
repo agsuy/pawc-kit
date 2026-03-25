@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pawc_kit.contracts.errors import ConfigurationError, StateError
-from pawc_kit.contracts.state import SessionState
+from pawc_kit.contracts.errors import ConfigurationError
 
 
 class LayoutManager:
@@ -57,16 +56,3 @@ class LayoutManager:
         (self.run_dir / "decisions").mkdir(exist_ok=True)
         for sd in subdirs or []:
             (self.run_dir / sd).mkdir(exist_ok=True)
-
-    def read_state(self) -> SessionState:
-        """Read and parse the session-state file."""
-        if not self.state_path.exists():
-            raise StateError(f"State file not found: {self.state_path}")
-        with open(self.state_path, encoding="utf-8") as f:
-            return SessionState.model_validate_json(f.read())
-
-    def write_state(self, state: SessionState) -> None:
-        """Write session state to disk."""
-        self.run_dir.mkdir(parents=True, exist_ok=True)
-        with open(self.state_path, "w", encoding="utf-8") as f:
-            f.write(state.model_dump_json(indent=2))
