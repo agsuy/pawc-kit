@@ -6,13 +6,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from pawc_kit.contracts.state import ArtifactRef
 
-class KeyArtifactRef(BaseModel):
-    """Key artifact in handoff: type, ref, description."""
 
-    type: str
-    ref: str
-    description: str
+class KeyArtifactRef(ArtifactRef):
+    """Key artifact in handoff context (same schema as ArtifactRef)."""
 
 
 class HandoffContext(BaseModel):
