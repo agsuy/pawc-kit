@@ -9,33 +9,12 @@ import pytest
 from conftest import make_simple_graph
 from pawc_kit._time import utc_now
 from pawc_kit.async_session import AsyncWorkflowSession
-from pawc_kit.contracts import ConfigurationError, RootConfig, SkillConfig
+from pawc_kit.contracts import ConfigurationError
 from pawc_kit.contracts.artifacts import HandoffContext
-from pawc_kit.contracts.config import PhaseDefConfig, WorkflowConfig
 from pawc_kit.contracts.execution import ExecutionRequest
 from pawc_kit.workflow.roles import ExecutionResult
-
-
-def _config(*, phases: list[PhaseDefConfig] | None = None, **workflow_kwargs) -> RootConfig:
-    wf = WorkflowConfig(phases=phases or [], **workflow_kwargs)
-    return RootConfig(skill=SkillConfig(name="test-skill", version="1.0.0"), workflow=wf)
-
-
-def _simple_phases() -> list[PhaseDefConfig]:
-    return [
-        PhaseDefConfig(
-            phase_id="work",
-            role_id="worker-role",
-            kind="executor",
-            on_complete=["review"],
-        ),
-        PhaseDefConfig(
-            phase_id="review",
-            role_id="reviewer-role",
-            kind="review",
-            can_request_changes_from=["work"],
-        ),
-    ]
+from session.conftest import make_config as _config
+from session.conftest import simple_phases as _simple_phases
 
 
 class MinimalAsyncWorker:

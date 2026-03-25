@@ -174,6 +174,9 @@ class AsyncRecordingObserver:
         self.events.append(event)
 
 
+RUN_KW = dict(session_id="s1", skill_name="skill", skill_version="1.0.0")
+
+
 @pytest.fixture()
 def mem_state_store() -> MemoryStateStore:
     return MemoryStateStore()
