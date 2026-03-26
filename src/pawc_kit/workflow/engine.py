@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 from pawc_kit._time import utc_now
 from pawc_kit.context import ContextPack, accessible_packs
@@ -25,7 +26,14 @@ from pawc_kit.contracts.events import (
 )
 from pawc_kit.contracts.execution import ContextPayload, ExecutionRequest, ReviewRequest
 from pawc_kit.contracts.state import IterationEntry, ReviewEntry, SessionState
-from pawc_kit.ports.artifacts import ArtifactStore, AsyncArtifactStore
+from pawc_kit.ports.artifacts import (
+    ArtifactReader,
+    ArtifactStore,
+    ArtifactWriter,
+    AsyncArtifactReader,
+    AsyncArtifactStore,
+    AsyncArtifactWriter,
+)
 from pawc_kit.ports.clock import AsyncClock, Clock
 from pawc_kit.ports.context import AsyncContextPackWriter
 from pawc_kit.ports.controller import RunController, RunSignal
@@ -42,6 +50,8 @@ from pawc_kit.workflow.roles import (
     ReviewResult,
     WorkflowHistoryView,
 )
+
+_logger = logging.getLogger("pawc_kit.workflow.engine")
 
 
 @dataclass
@@ -193,15 +203,11 @@ def _context_payload_from_pack(pack: ContextPack) -> ContextPayload:
 # ---------------------------------------------------------------------------
 
 
-def _start_run_state(
-    state: SessionState, metadata: Mapping[str, Any] | None
-) -> SessionState:
+def _start_run_state(state: SessionState, metadata: Mapping[str, Any] | None) -> SessionState:
     return state.model_copy(
         update={
             "status": "in_progress",
-            "run_metadata": (
-                dict(metadata) if metadata is not None else None
-            ),
+            "run_metadata": (dict(metadata) if metadata is not None else None),
         }
     )
 
@@ -261,19 +267,20 @@ def _transition_events(
     )
 
 
+_FinalizeStatus = Literal["completed", "abandoned", "failed"]
+
+
 def _finalize_state(
     state: SessionState,
-    status: str,
+    status: _FinalizeStatus,
     completed_at: str,
 ) -> SessionState:
-    return state.model_copy(
-        update={"status": status, "completed_at": completed_at}
-    )
+    return state.model_copy(update={"status": status, "completed_at": completed_at})
 
 
 def _finalize_event(
     runtime: _Runtime,
-    status: str,
+    status: _FinalizeStatus,
     completed_at: str,
 ) -> RunCompleted:
     return RunCompleted(
@@ -309,12 +316,8 @@ def _build_iteration_entry(
     )
 
 
-def _commit_iteration_state(
-    state: SessionState, entry: IterationEntry
-) -> SessionState:
-    return state.model_copy(
-        update={"phase_iterations": [*state.phase_iterations, entry]}
-    )
+def _commit_iteration_state(state: SessionState, entry: IterationEntry) -> SessionState:
+    return state.model_copy(update={"phase_iterations": [*state.phase_iterations, entry]})
 
 
 def _iteration_committed_event(
@@ -340,9 +343,7 @@ def _iteration_committed_event(
     )
 
 
-def _make_decision_payload(
-    phase: PhaseDefinition, result: "ReviewResult"
-) -> DecisionPayload:
+def _make_decision_payload(phase: PhaseDefinition, result: "ReviewResult") -> DecisionPayload:
     return DecisionPayload(
         phase_id=phase.phase_id,
         role_id=result.role_id,
@@ -380,8 +381,7 @@ def _resolve_review_transition(
     )
     if next_phase is None:
         raise TransitionError(
-            f"{phase.phase_id!r} cannot REQUEST_CHANGES without "
-            "can_request_changes_from targets"
+            f"{phase.phase_id!r} cannot REQUEST_CHANGES without can_request_changes_from targets"
         )
     return next_phase, 1
 
@@ -515,26 +515,33 @@ class WorkflowEngine:
         state_store: StateStore,
         artifact_store: ArtifactStore,
         *,
+        artifact_reader: ArtifactReader | None = None,
+        artifact_writer: ArtifactWriter | None = None,
         observer: WorkflowObserver | None = None,
         clock: Clock | None = None,
         confidence_threshold: int = 85,
         max_iterations: int = 10,
         max_feedback_rounds: int = 3,
         confidence_floor: int | None = None,
+        artifact_backfill_retries: int = 1,
         metadata: Mapping[str, Any] | None = None,
         invoker: RoleInvoker | None = None,
         controller: RunController | None = None,
+        adhoc_questions: bool = False,
     ) -> None:
         self._graph = graph
         self._state_store = state_store
-        self._artifact_store = artifact_store
+        self._artifact_reader: ArtifactReader = artifact_reader or artifact_store
+        self._artifact_writer: ArtifactWriter = artifact_writer or artifact_store
         self._observer = observer
         self._clock = clock or _SystemClock()
         self._threshold = confidence_threshold
         self._max_iterations = max_iterations
         self._max_feedback_rounds = max_feedback_rounds
         self._confidence_floor = confidence_floor
+        self._artifact_backfill_retries = artifact_backfill_retries
         self._metadata = metadata
+        self._adhoc_questions = adhoc_questions
         self._explicit_invoker = invoker is not None
         if invoker is not None:
             self._invoker: RoleInvoker = invoker
@@ -548,6 +555,7 @@ class WorkflowEngine:
             from pawc_kit.adapters.always_continue import AlwaysContinue
 
             self._controller = AlwaysContinue()
+        self._applied_human_reviews: set[tuple[str, int]] = set()
 
     def register_role(self, role_id: str, role: Executor | Reviewer) -> None:
         from pawc_kit.adapters.local_invoker import LocalRoleInvoker
@@ -568,6 +576,7 @@ class WorkflowEngine:
         context_id: str | None = None,
         context_pack: ContextPack | None = None,
     ) -> SessionState:
+        self._applied_human_reviews = set()
         metadata = SessionMetadata(
             session_id=session_id,
             skill_name=skill_name,
@@ -675,15 +684,13 @@ class WorkflowEngine:
         self._emit(trans_evt)
         self._emit(phase_evt)
 
-    def _finalize(self, runtime: _Runtime, *, status: str) -> None:
+    def _finalize(self, runtime: _Runtime, *, status: _FinalizeStatus) -> None:
         completed_at = self._clock.now()
         state = _finalize_state(runtime.state, status, completed_at)
         self._save(runtime, state)
         self._emit(_finalize_event(runtime, status, completed_at))
 
-    def _history_for_phase(
-        self, runtime: _Runtime, phase: PhaseDefinition
-    ) -> WorkflowHistoryView:
+    def _history_for_phase(self, runtime: _Runtime, phase: PhaseDefinition) -> WorkflowHistoryView:
         previous_decision: DecisionPayload | None = None
         for review in reversed(runtime.state.reviews):
             if (
@@ -691,7 +698,7 @@ class WorkflowEngine:
                 and review.target_phase == phase.phase_id
                 and review.findings_ref
             ):
-                payload_bytes = self._artifact_store.load_artifact(review.findings_ref)
+                payload_bytes = self._artifact_reader.load_artifact(review.findings_ref)
                 previous_decision = DecisionPayload.model_validate_json(
                     payload_bytes.decode("utf-8")
                 )
@@ -737,26 +744,55 @@ class WorkflowEngine:
             result = self._invoker.invoke_executor(self._build_execution_request(runtime, phase))
             last_result = result
             _validate_role_output(
-                phase, role_id=result.role_id, started_at=started_at, ended_at=result.ended_at,
+                phase,
+                role_id=result.role_id,
+                started_at=started_at,
+                ended_at=result.ended_at,
             )
 
             handoff_ref = None
             if result.handoff is not None:
-                handoff_ref = self._artifact_store.save_handoff(
-                    runtime.state.session_id, phase.phase_id, result.role_id,
-                    _count_iterations(runtime.state, phase.phase_id) + 1, result.handoff,
+                handoff_ref = self._artifact_writer.save_handoff(
+                    runtime.state.session_id,
+                    phase.phase_id,
+                    result.role_id,
+                    _count_iterations(runtime.state, phase.phase_id) + 1,
+                    result.handoff,
                 )
 
+            if result.handoff:
+                written = {f.ref for f in result.files}
+                phantom = [
+                    a.ref
+                    for a in result.handoff.key_artifacts
+                    if a.ref.endswith(".md") and a.ref not in written
+                ]
+                if phantom:
+                    _logger.warning(
+                        "Phase %s: handoff references .md files not in result.files: %s",
+                        phase.phase_id,
+                        phantom,
+                    )
+
             entry = _build_iteration_entry(
-                runtime.state, phase, result, started_at,
+                runtime.state,
+                phase,
+                result,
+                started_at,
                 handoff_ref.ref if handoff_ref else None,
             )
             state = _commit_iteration_state(runtime.state, entry)
             self._save(runtime, state)
             _accumulate_runtime_usage(runtime, result.usage)
-            self._emit(
-                _iteration_committed_event(runtime, phase, entry, result, started_at)
-            )
+            self._emit(_iteration_committed_event(runtime, phase, entry, result, started_at))
+
+            if result.pending_question is not None:
+                if not self._adhoc_questions:
+                    raise ConfigurationError(
+                        f"Phase {phase.phase_id!r} returned a pending_question but "
+                        "adhoc_questions is disabled"
+                    )
+                raise _StopRequested()
 
             iteration_count += 1
             if not targets:
@@ -770,6 +806,10 @@ class WorkflowEngine:
             if result.confidence_score >= self._threshold:
                 break
             if iteration_count >= self._max_iterations:
+                # Multi-target phases use routing (chosen_next) without meeting threshold;
+                # a single target with no valid next choice still fails below.
+                if len(targets) > 1:
+                    break
                 self._finalize(runtime, status="failed")
                 return
 
@@ -781,32 +821,129 @@ class WorkflowEngine:
             return
         self._transition_to(runtime, phase.phase_id, next_phase)
 
+    def _apply_committed_review(
+        self,
+        runtime: _Runtime,
+        phase: PhaseDefinition,
+        entry: ReviewEntry,
+    ) -> None:
+        """Transition based on an already-committed review entry (human resume path)."""
+        if entry.decision == "APPROVE":
+            next_phase = _resolve_target(
+                phase.phase_id,
+                "on_approve",
+                self._graph.on_approve_targets(phase.phase_id),
+                entry.target_phase,
+            )
+        elif entry.decision == "REQUEST_CHANGES":
+            next_phase = _resolve_target(
+                phase.phase_id,
+                "REQUEST_CHANGES",
+                self._graph.can_request_changes_from_targets(phase.phase_id),
+                entry.target_phase,
+                chosen_label="target_phase",
+            )
+            if next_phase is None:
+                raise TransitionError(
+                    f"{phase.phase_id!r} cannot REQUEST_CHANGES without "
+                    "can_request_changes_from targets"
+                )
+        else:
+            raise TransitionError(
+                f"{phase.phase_id!r} committed review has unexpected decision: {entry.decision!r}"
+            )
+
+        if next_phase is None:
+            self._finalize(runtime, status="completed")
+            return
+        self._transition_to(runtime, phase.phase_id, next_phase)
+
     def _run_review(self, runtime: _Runtime, phase: PhaseDefinition) -> None:
+        review_idx = _count_reviews(runtime.state, phase.phase_id) + 1
+
+        committed = _find_committed_human_review(runtime.state, phase.phase_id, review_idx)
+        if committed is not None:
+            self._applied_human_reviews.add((phase.phase_id, committed.review))
+            self._apply_committed_review(runtime, phase, committed)
+            return
+
+        if phase.human and review_idx > 1:
+            key = (phase.phase_id, review_idx - 1)
+            if key not in self._applied_human_reviews:
+                prev = _find_committed_human_review(runtime.state, phase.phase_id, review_idx - 1)
+                if prev is not None:
+                    self._applied_human_reviews.add(key)
+                    self._apply_committed_review(runtime, phase, prev)
+                    return
+
+        if phase.human:
+            now = self._clock.now()
+            stub = ReviewEntry(
+                review=review_idx,
+                phase_id=phase.phase_id,
+                role_id=phase.role_id,
+                decision="PENDING",
+                confidence_score=None,
+                ended_at=now,
+            )
+            state = runtime.state.model_copy(update={"reviews": [*runtime.state.reviews, stub]})
+            self._save(runtime, state)
+            self._emit(
+                HumanReviewPending(
+                    session_id=runtime.state.session_id,
+                    phase_id=phase.phase_id,
+                    role_id=phase.role_id,
+                    review=review_idx,
+                    revision=runtime.stored.revision,
+                    occurred_at=now,
+                )
+            )
+            raise _StopRequested()
+
         started_at = self._clock.now()
         result = self._invoker.invoke_reviewer(self._build_review_request(runtime, phase))
         _validate_role_output(
-            phase, role_id=result.role_id, started_at=started_at, ended_at=result.ended_at,
+            phase,
+            role_id=result.role_id,
+            started_at=started_at,
+            ended_at=result.ended_at,
         )
 
         payload = _make_decision_payload(phase, result)
         next_phase, fb_delta = _resolve_review_transition(
-            phase, self._graph, payload, result.chosen_next,
+            phase,
+            self._graph,
+            payload,
+            result.chosen_next,
         )
         feedback_loops = runtime.state.feedback_loops + fb_delta
 
-        review_idx = _count_reviews(runtime.state, phase.phase_id) + 1
-        decision_ref = self._artifact_store.save_decision(
-            runtime.state.session_id, phase.phase_id, result.role_id, review_idx, payload,
+        decision_ref = self._artifact_writer.save_decision(
+            runtime.state.session_id,
+            phase.phase_id,
+            result.role_id,
+            review_idx,
+            payload,
         )
         review_entry = _build_review_entry(
-            runtime.state, phase, payload, decision_ref.ref, review_idx,
+            runtime.state,
+            phase,
+            payload,
+            decision_ref.ref,
+            review_idx,
         )
         state = _commit_review_state(runtime.state, review_entry, feedback_loops)
         self._save(runtime, state)
         _accumulate_runtime_usage(runtime, result.usage)
         self._emit(
             _review_committed_event(
-                runtime, phase, review_entry, payload, result, started_at, decision_ref.ref,
+                runtime,
+                phase,
+                review_entry,
+                payload,
+                result,
+                started_at,
+                decision_ref.ref,
             )
         )
         self._check_signal(runtime)
@@ -832,12 +969,15 @@ class AsyncWorkflowEngine:
         state_store: AsyncStateStore,
         artifact_store: AsyncArtifactStore,
         *,
+        artifact_reader: AsyncArtifactReader | None = None,
+        artifact_writer: AsyncArtifactWriter | None = None,
         observer: AsyncWorkflowObserver | None = None,
         clock: AsyncClock | None = None,
         confidence_threshold: int = 85,
         max_iterations: int = 10,
         max_feedback_rounds: int = 3,
         confidence_floor: int | None = None,
+        artifact_backfill_retries: int = 1,
         metadata: Mapping[str, Any] | None = None,
         invoker: AsyncRoleInvoker | None = None,
         controller: RunController | None = None,
@@ -846,13 +986,15 @@ class AsyncWorkflowEngine:
     ) -> None:
         self._graph = graph
         self._state_store = state_store
-        self._artifact_store = artifact_store
+        self._artifact_reader: AsyncArtifactReader = artifact_reader or artifact_store
+        self._artifact_writer: AsyncArtifactWriter = artifact_writer or artifact_store
         self._observer = observer
         self._clock = clock or _AsyncSystemClock()
         self._threshold = confidence_threshold
         self._max_iterations = max_iterations
         self._max_feedback_rounds = max_feedback_rounds
         self._confidence_floor = confidence_floor
+        self._artifact_backfill_retries = artifact_backfill_retries
         self._metadata = metadata
         self._context_pack_writer = context_pack_writer
         self._adhoc_questions = adhoc_questions
@@ -991,9 +1133,7 @@ class AsyncWorkflowEngine:
         await self._emit(run_evt)
         await self._emit(phase_evt)
 
-    async def _transition_to(
-        self, runtime: _Runtime, from_phase_id: str, to_phase_id: str
-    ) -> None:
+    async def _transition_to(self, runtime: _Runtime, from_phase_id: str, to_phase_id: str) -> None:
         state = runtime.state.model_copy(update={"current_phase": to_phase_id})
         await self._save(runtime, state)
         now = await self._clock.now()
@@ -1003,7 +1143,7 @@ class AsyncWorkflowEngine:
         await self._emit(trans_evt)
         await self._emit(phase_evt)
 
-    async def _finalize(self, runtime: _Runtime, *, status: str) -> None:
+    async def _finalize(self, runtime: _Runtime, *, status: _FinalizeStatus) -> None:
         completed_at = await self._clock.now()
         state = _finalize_state(runtime.state, status, completed_at)
         await self._save(runtime, state)
@@ -1013,7 +1153,7 @@ class AsyncWorkflowEngine:
             and runtime.state.context_id
         ):
             await self._context_pack_writer.finalize(
-                runtime.state.context_id, approved=True
+                runtime.state.context_id, approved=True, lock=True
             )
         await self._emit(_finalize_event(runtime, status, completed_at))
 
@@ -1027,7 +1167,7 @@ class AsyncWorkflowEngine:
                 and review.target_phase == phase.phase_id
                 and review.findings_ref
             ):
-                payload_bytes = await self._artifact_store.load_artifact(review.findings_ref)
+                payload_bytes = await self._artifact_reader.load_artifact(review.findings_ref)
                 previous_decision = DecisionPayload.model_validate_json(
                     payload_bytes.decode("utf-8")
                 )
@@ -1077,26 +1217,53 @@ class AsyncWorkflowEngine:
             )
             last_result = result
             _validate_role_output(
-                phase, role_id=result.role_id, started_at=started_at, ended_at=result.ended_at,
+                phase,
+                role_id=result.role_id,
+                started_at=started_at,
+                ended_at=result.ended_at,
             )
 
             handoff_ref = None
             if result.handoff is not None:
-                handoff_ref = await self._artifact_store.save_handoff(
-                    runtime.state.session_id, phase.phase_id, result.role_id,
-                    _count_iterations(runtime.state, phase.phase_id) + 1, result.handoff,
+                handoff_ref = await self._artifact_writer.save_handoff(
+                    runtime.state.session_id,
+                    phase.phase_id,
+                    result.role_id,
+                    _count_iterations(runtime.state, phase.phase_id) + 1,
+                    result.handoff,
                 )
 
+            if self._context_pack_writer is not None and runtime.state.context_id:
+                for f in result.files:
+                    await self._context_pack_writer.write_discovery_file(
+                        runtime.state.context_id, f.ref, f.content
+                    )
+
+            if result.handoff:
+                written = {f.ref for f in result.files}
+                phantom = [
+                    a.ref
+                    for a in result.handoff.key_artifacts
+                    if a.ref.endswith(".md") and a.ref not in written
+                ]
+                if phantom:
+                    _logger.warning(
+                        "Phase %s: handoff references .md files not in result.files: %s",
+                        phase.phase_id,
+                        phantom,
+                    )
+
             entry = _build_iteration_entry(
-                runtime.state, phase, result, started_at,
+                runtime.state,
+                phase,
+                result,
+                started_at,
                 handoff_ref.ref if handoff_ref else None,
             )
             state = _commit_iteration_state(runtime.state, entry)
             await self._save(runtime, state)
             _accumulate_runtime_usage(runtime, result.usage)
-            await self._emit(
-                _iteration_committed_event(runtime, phase, entry, result, started_at)
-            )
+            await self._emit(_iteration_committed_event(runtime, phase, entry, result, started_at))
 
             if result.pending_question is not None:
                 if not self._adhoc_questions:
@@ -1129,6 +1296,8 @@ class AsyncWorkflowEngine:
             if result.confidence_score >= self._threshold:
                 break
             if iteration_count >= self._max_iterations:
+                if len(targets) > 1:
+                    break
                 await self._finalize(runtime, status="failed")
                 return
 
@@ -1202,22 +1371,39 @@ class AsyncWorkflowEngine:
 
         payload = _make_decision_payload(phase, result)
         next_phase, fb_delta = _resolve_review_transition(
-            phase, self._graph, payload, result.chosen_next,
+            phase,
+            self._graph,
+            payload,
+            result.chosen_next,
         )
         feedback_loops = runtime.state.feedback_loops + fb_delta
 
-        decision_ref = await self._artifact_store.save_decision(
-            runtime.state.session_id, phase.phase_id, result.role_id, review_idx, payload,
+        decision_ref = await self._artifact_writer.save_decision(
+            runtime.state.session_id,
+            phase.phase_id,
+            result.role_id,
+            review_idx,
+            payload,
         )
         review_entry = _build_review_entry(
-            runtime.state, phase, payload, decision_ref.ref, review_idx,
+            runtime.state,
+            phase,
+            payload,
+            decision_ref.ref,
+            review_idx,
         )
         state = _commit_review_state(runtime.state, review_entry, feedback_loops)
         await self._save(runtime, state)
         _accumulate_runtime_usage(runtime, result.usage)
         await self._emit(
             _review_committed_event(
-                runtime, phase, review_entry, payload, result, started_at, decision_ref.ref,
+                runtime,
+                phase,
+                review_entry,
+                payload,
+                result,
+                started_at,
+                decision_ref.ref,
             )
         )
         self._check_signal(runtime)

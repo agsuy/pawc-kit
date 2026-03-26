@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
-from pawc_kit.contracts.artifacts import DecisionPayload, FindingEntry, HandoffContext
+from pawc_kit.contracts.artifacts import DecisionPayload, FileArtifact, FindingEntry, HandoffContext
 from pawc_kit.contracts.discovery import QuestionRequest
 from pawc_kit.contracts.execution import ExecutionRequest, ReviewRequest
 from pawc_kit.contracts.state import ArtifactRef, IterationEntry, ReviewEntry
@@ -51,6 +51,7 @@ class ExecutionResult:
     confidence_score: int
     summary: str
     artifacts: list[ArtifactRef] = field(default_factory=list)
+    files: list[FileArtifact] = field(default_factory=list)
     handoff: HandoffContext | None = None
     chosen_next: str | None = None
     pending_question: QuestionRequest | None = None

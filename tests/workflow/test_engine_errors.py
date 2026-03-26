@@ -265,7 +265,10 @@ def test_sync_register_role_with_invoker_raises() -> None:
     ss = MemoryStateStore()
     as_ = MemoryArtifactStore()
     engine = WorkflowEngine(
-        make_simple_graph(), ss, as_, invoker=_StubSyncInvoker()  # type: ignore[arg-type]
+        make_simple_graph(),
+        ss,
+        as_,
+        invoker=_StubSyncInvoker(),  # type: ignore[arg-type]
     )
     with pytest.raises(ConfigurationError, match="register_role"):
         engine.register_role("worker-role", MinimalWorker())
@@ -527,9 +530,7 @@ def test_async_committed_review_bad_decision_raises() -> None:
     state = asyncio.run(engine.run(**RUN_KW))
     assert state.status == "in_progress"
 
-    pending_idx = next(
-        i for i, r in enumerate(state.reviews) if r.decision == "PENDING"
-    )
+    pending_idx = next(i for i, r in enumerate(state.reviews) if r.decision == "PENDING")
     bad_review = ReviewEntry.model_construct(
         review=state.reviews[pending_idx].review,
         phase_id="review",
@@ -684,3 +685,139 @@ def test_async_terminal_executor_completes() -> None:
     run_completed = [e for e in obs.events if isinstance(e, RunCompleted)]
     assert len(run_completed) == 1
     assert run_completed[0].status == "completed"
+
+
+# ---------------------------------------------------------------------------
+# Engine phantom-ref warning
+# ---------------------------------------------------------------------------
+
+
+def _phantom_executor_graph() -> PhaseGraph:
+    """Single terminal executor phase."""
+    return PhaseGraph(
+        [
+            PhaseDefinition(
+                phase_id="work",
+                role_id="worker-role",
+                kind="executor",
+                on_complete=[],
+            )
+        ]
+    )
+
+
+class _PhantomRefWorker:
+    """Executor that returns handoff.key_artifacts with .md refs but no files."""
+
+    def execute(self, req: ExecutionRequest) -> ExecutionResult:
+        from pawc_kit.contracts.artifacts import HandoffContext, KeyArtifactRef
+
+        return ExecutionResult(
+            role_id=req.phase.role_id,
+            ended_at=utc_now(),
+            confidence_score=85,
+            summary="done",
+            handoff=HandoffContext(
+                summary="handoff",
+                key_artifacts=[
+                    KeyArtifactRef(
+                        type="file",
+                        ref="discovery/missing.md",
+                        description="Missing file",
+                    )
+                ],
+            ),
+            files=[],
+        )
+
+
+class _AsyncPhantomRefWorker:
+    """Async version of _PhantomRefWorker."""
+
+    async def execute(self, req: ExecutionRequest) -> ExecutionResult:
+        return _PhantomRefWorker().execute(req)
+
+
+def test_sync_engine_warns_on_phantom_refs(caplog: pytest.LogCaptureFixture) -> None:
+    """Sync engine logs a WARNING when handoff has .md refs not in result.files."""
+    import logging
+
+    ss = MemoryStateStore()
+    as_ = MemoryArtifactStore()
+    engine = WorkflowEngine(_phantom_executor_graph(), ss, as_)
+    engine.register_role("worker-role", _PhantomRefWorker())
+
+    with caplog.at_level(logging.WARNING, logger="pawc_kit.workflow.engine"):
+        engine.run(**RUN_KW)
+
+    assert any(
+        "handoff references .md files not in result.files" in r.message for r in caplog.records
+    )
+    assert any("discovery/missing.md" in r.message for r in caplog.records)
+
+
+def test_async_engine_warns_on_phantom_refs(caplog: pytest.LogCaptureFixture) -> None:
+    """Async engine logs a WARNING when handoff has .md refs not in result.files."""
+    import logging
+
+    ss = MemoryStateStore()
+    as_ = MemoryArtifactStore()
+    engine = AsyncWorkflowEngine(
+        _phantom_executor_graph(),
+        AsyncMemoryStateStore(ss),
+        AsyncMemoryArtifactStore(as_),
+    )
+    engine.register_role("worker-role", _AsyncPhantomRefWorker())
+
+    with caplog.at_level(logging.WARNING, logger="pawc_kit.workflow.engine"):
+        asyncio.run(engine.run(**RUN_KW))
+
+    assert any(
+        "handoff references .md files not in result.files" in r.message for r in caplog.records
+    )
+    assert any("discovery/missing.md" in r.message for r in caplog.records)
+
+
+def test_engine_no_warning_when_files_match_refs(caplog: pytest.LogCaptureFixture) -> None:
+    """No warning when all .md refs in key_artifacts are also in result.files."""
+    import logging
+
+    from pawc_kit.contracts.artifacts import FileArtifact, HandoffContext, KeyArtifactRef
+
+    class _PopulatedWorker:
+        def execute(self, req: ExecutionRequest) -> ExecutionResult:
+            fa = FileArtifact(
+                type="file",
+                ref="discovery/present.md",
+                description="Present file",
+                content="# Present\n",
+            )
+            return ExecutionResult(
+                role_id=req.phase.role_id,
+                ended_at=utc_now(),
+                confidence_score=90,
+                summary="done",
+                handoff=HandoffContext(
+                    summary="handoff",
+                    key_artifacts=[
+                        KeyArtifactRef(type="file", ref="discovery/present.md", description="p")
+                    ],
+                ),
+                files=[fa],
+                artifacts=[fa.to_artifact_ref()],
+            )
+
+    ss = MemoryStateStore()
+    as_ = MemoryArtifactStore()
+    engine = WorkflowEngine(_phantom_executor_graph(), ss, as_)
+    engine.register_role("worker-role", _PopulatedWorker())
+
+    with caplog.at_level(logging.WARNING, logger="pawc_kit.workflow.engine"):
+        engine.run(**RUN_KW)
+
+    warning_records = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "handoff references" in r.message
+    ]
+    assert len(warning_records) == 0

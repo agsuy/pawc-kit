@@ -3,6 +3,7 @@
 Covers gaps: 3 (multi-target on_approve routing), 4 (multi-target REQUEST_CHANGES routing),
 5 (sync max_feedback_rounds exhaustion), 7 (adhoc question disabled),
 8 (adhoc question without context_id), 13 (human review second cycle review_idx),
+sync human review parity (PENDING / resume / REQUEST_CHANGES loop),
 14 (signal at review commit boundary), 17 (validate_against_pack / context scoping).
 """
 
@@ -19,9 +20,9 @@ from pawc_kit.context import ContextPack
 from pawc_kit.contracts.context import ContextMetadata
 from pawc_kit.contracts.discovery import QuestionRequest
 from pawc_kit.contracts.errors import ConfigurationError, TransitionError
-from pawc_kit.contracts.events import PhaseTransitioned, RunCompleted
+from pawc_kit.contracts.events import HumanReviewPending, PhaseTransitioned, RunCompleted
 from pawc_kit.contracts.execution import ExecutionRequest, ReviewRequest
-from pawc_kit.contracts.state import ReviewEntry
+from pawc_kit.contracts.state import ArtifactRef, ReviewEntry
 from pawc_kit.ports.controller import RunSignal
 from pawc_kit.ports.state import StoredSession
 from pawc_kit.workflow import AsyncWorkflowEngine, WorkflowEngine
@@ -331,7 +332,6 @@ def test_sync_multi_request_changes_routes_with_target_phase() -> None:
                 ),
             )
 
-
     engine, ss, obs = _sync_engine(_multi_request_changes_graph())
     engine.register_role("work", MinimalWorker())
     engine.register_role("reviewer", TwoRoundReviewer())
@@ -453,6 +453,179 @@ def test_async_adhoc_question_no_context_id_still_stops() -> None:
 
     assert state.status == "in_progress"
     assert writer.questions == []
+
+
+# ---------------------------------------------------------------------------
+# Sync engine: human review (parity with async)
+# ---------------------------------------------------------------------------
+
+
+def test_sync_human_review_pauses_with_pending() -> None:
+    ss = MemoryStateStore()
+    as_ = MemoryArtifactStore()
+    obs = RecordingObserver(ss)
+    engine = WorkflowEngine(
+        _human_review_graph(),
+        ss,
+        as_,
+        observer=obs,
+        confidence_threshold=0,
+    )
+    engine.register_role("research", MinimalWorker())
+    engine.register_role("human_review", RoutingReviewer())
+
+    state = engine.run(**RUN_KW)
+    assert state.status == "in_progress"
+    assert state.current_phase == "human_review"
+    pending = [r for r in state.reviews if r.decision == "PENDING"]
+    assert len(pending) == 1
+    assert pending[0].review == 1
+    assert any(isinstance(e, HumanReviewPending) for e in obs.events)
+
+
+def test_sync_human_review_resume_approve() -> None:
+    ss = MemoryStateStore()
+    as_ = MemoryArtifactStore()
+    engine = WorkflowEngine(
+        _human_review_graph(),
+        ss,
+        as_,
+        confidence_threshold=0,
+    )
+    engine.register_role("research", MinimalWorker())
+    engine.register_role("human_review", RoutingReviewer())
+
+    state = engine.run(**RUN_KW)
+    assert state.status == "in_progress"
+
+    approve = ReviewEntry(
+        review=1,
+        phase_id="human_review",
+        role_id="human_review",
+        decision="APPROVE",
+        ended_at=TS,
+        summary="All good",
+    )
+    current = ss.current
+    updated_reviews = [
+        approve if (r.phase_id == "human_review" and r.decision == "PENDING") else r
+        for r in current.state.reviews
+    ]
+    updated_state = current.state.model_copy(update={"reviews": updated_reviews})
+    ss._stored = StoredSession(state=updated_state, revision=current.revision)
+
+    state = engine.run(**RUN_KW)
+    assert state.status == "completed"
+
+
+def test_sync_human_review_resume_request_changes() -> None:
+    ss = MemoryStateStore()
+    as_ = MemoryArtifactStore()
+    engine = WorkflowEngine(
+        _human_review_graph(),
+        ss,
+        as_,
+        confidence_threshold=0,
+    )
+    engine.register_role("research", MinimalWorker())
+    engine.register_role("human_review", RoutingReviewer())
+
+    state = engine.run(**RUN_KW)
+    assert state.status == "in_progress"
+
+    request_changes = ReviewEntry(
+        review=1,
+        phase_id="human_review",
+        role_id="human_review",
+        decision="REQUEST_CHANGES",
+        ended_at=TS,
+        summary="Needs more detail",
+        target_phase="research",
+    )
+    current = ss.current
+    updated_reviews = [
+        request_changes if (r.phase_id == "human_review" and r.decision == "PENDING") else r
+        for r in current.state.reviews
+    ]
+    updated_state = current.state.model_copy(update={"reviews": updated_reviews})
+    ss._stored = StoredSession(state=updated_state, revision=current.revision)
+
+    state = engine.run(**RUN_KW)
+    assert state.status == "in_progress"
+    assert state.current_phase == "human_review"
+    pending = [r for r in state.reviews if r.decision == "PENDING"]
+    assert len(pending) == 1
+    assert pending[0].review == 2
+
+
+def test_sync_human_review_second_cycle() -> None:
+    """Two consecutive human review rounds: REQUEST_CHANGES then APPROVE (sync)."""
+    ss = MemoryStateStore()
+    as_ = MemoryArtifactStore()
+    engine = WorkflowEngine(
+        _human_review_graph(),
+        ss,
+        as_,
+        confidence_threshold=0,
+    )
+    engine.register_role("research", MinimalWorker())
+    engine.register_role("human_review", RoutingReviewer())
+
+    state = engine.run(**RUN_KW)
+    assert state.status == "in_progress"
+    assert state.current_phase == "human_review"
+    pending = [r for r in state.reviews if r.decision == "PENDING"]
+    assert len(pending) == 1
+    assert pending[0].review == 1
+
+    request_changes = ReviewEntry(
+        review=1,
+        phase_id="human_review",
+        role_id="human_review",
+        decision="REQUEST_CHANGES",
+        ended_at=TS,
+        summary="Needs more detail",
+        target_phase="research",
+    )
+    current = ss.current
+    updated_reviews = [
+        request_changes if (r.phase_id == "human_review" and r.decision == "PENDING") else r
+        for r in current.state.reviews
+    ]
+    updated_state = current.state.model_copy(update={"reviews": updated_reviews})
+    ss._stored = StoredSession(state=updated_state, revision=current.revision)
+
+    state = engine.run(**RUN_KW)
+    assert state.status == "in_progress"
+    assert state.current_phase == "human_review"
+    pending = [r for r in state.reviews if r.decision == "PENDING"]
+    assert len(pending) == 1
+    assert pending[0].review == 2, f"Expected review_idx=2, got {pending[0].review}"
+
+    approve = ReviewEntry(
+        review=2,
+        phase_id="human_review",
+        role_id="human_review",
+        decision="APPROVE",
+        ended_at=TS,
+        summary="All good now",
+    )
+    current = ss.current
+    updated_reviews = [
+        approve if (r.phase_id == "human_review" and r.decision == "PENDING") else r
+        for r in current.state.reviews
+    ]
+    updated_state = current.state.model_copy(update={"reviews": updated_reviews})
+    ss._stored = StoredSession(state=updated_state, revision=current.revision)
+
+    state = engine.run(**RUN_KW)
+    assert state.status == "completed"
+
+    reviews_for_human = [r for r in state.reviews if r.phase_id == "human_review"]
+    assert len(reviews_for_human) == 2
+    decisions = {r.review: r.decision for r in reviews_for_human}
+    assert decisions[1] == "REQUEST_CHANGES"
+    assert decisions[2] == "APPROVE"
 
 
 # ---------------------------------------------------------------------------
@@ -726,3 +899,126 @@ def test_async_context_sources_scopes_pack() -> None:
     child_ids = [c.context_id for c in req.context.children]
     assert "child-1" in child_ids
     assert "child-2" not in child_ids
+
+
+# ---------------------------------------------------------------------------
+# Artifact reader/writer split: engine uses distinct reader and writer
+# ---------------------------------------------------------------------------
+
+
+class _WriteOnlyStore:
+    """ArtifactWriter that records calls but does not implement load."""
+
+    def __init__(self) -> None:
+        self.writes: list[str] = []
+
+    def save_handoff(
+        self,
+        session_id: str,
+        phase_id: str,
+        role_id: str,
+        sequence: int,
+        handoff: object,
+    ) -> ArtifactRef:
+        ref = f"handoffs/{phase_id}-{sequence}.json"
+        self.writes.append(ref)
+        return ArtifactRef(type="handoff", ref=ref, description="handoff")
+
+    def save_decision(
+        self,
+        session_id: str,
+        phase_id: str,
+        role_id: str,
+        sequence: int,
+        payload: object,
+    ) -> ArtifactRef:
+        ref = f"decisions/{phase_id}-{sequence}.json"
+        self.writes.append(ref)
+        return ArtifactRef(type="decision", ref=ref, description="decision")
+
+    def save_file(self, session_id: str, rel_path: str, content: str | bytes) -> ArtifactRef:
+        self.writes.append(rel_path)
+        return ArtifactRef(type="file", ref=rel_path, description="file")
+
+
+class _ReadOnlyStore:
+    """ArtifactReader with no write capabilities."""
+
+    def __init__(self) -> None:
+        self.reads: list[str] = []
+
+    def load_artifact(self, ref: ArtifactRef | str) -> bytes:
+        key = ref.ref if isinstance(ref, ArtifactRef) else ref
+        self.reads.append(key)
+        return b"{}"
+
+
+def test_sync_engine_routes_reads_and_writes_to_split_stores() -> None:
+    """With distinct reader/writer, saves go to writer and loads never hit reader
+    in a simple approve flow (no REQUEST_CHANGES to trigger load)."""
+    ss = MemoryStateStore()
+    dummy_store = MemoryArtifactStore()
+    writer = _WriteOnlyStore()
+    reader = _ReadOnlyStore()
+
+    engine = WorkflowEngine(
+        _multi_approve_graph(),
+        ss,
+        dummy_store,
+        artifact_reader=reader,
+        artifact_writer=writer,
+        confidence_threshold=0,
+    )
+    engine.register_role("work", MinimalWorker())
+    engine.register_role("reviewer", RoutingReviewer(decision="APPROVE", chosen_next="fast"))
+    state = engine.run(**RUN_KW)
+
+    assert state.status == "completed"
+    assert len(writer.writes) > 0, "writer should have received save calls"
+    assert len(reader.reads) == 0, "reader should not be called without REQUEST_CHANGES"
+
+
+# ---------------------------------------------------------------------------
+# Sync engine: adhoc_questions parity with async
+# ---------------------------------------------------------------------------
+
+
+class SyncQuestionWorker:
+    def execute(self, req: ExecutionRequest) -> ExecutionResult:
+        return ExecutionResult(
+            role_id=req.phase.role_id,
+            ended_at=utc_now(),
+            confidence_score=90,
+            summary="needs clarification",
+            pending_question=QuestionRequest(question_id="q-1", question="What API?"),
+        )
+
+
+def test_sync_adhoc_question_disabled_raises() -> None:
+    """Sync engine: pending_question with adhoc_questions=False raises ConfigurationError."""
+    ss = MemoryStateStore()
+    as_ = MemoryArtifactStore()
+    engine = WorkflowEngine(
+        _simple_async_graph(),
+        ss,
+        as_,
+        adhoc_questions=False,
+    )
+    engine.register_role("research", SyncQuestionWorker())
+    with pytest.raises(ConfigurationError, match="adhoc_questions"):
+        engine.run(**RUN_KW)
+
+
+def test_sync_adhoc_question_enabled_stops_in_progress() -> None:
+    """Sync engine: pending_question with adhoc_questions=True pauses (in_progress)."""
+    ss = MemoryStateStore()
+    as_ = MemoryArtifactStore()
+    engine = WorkflowEngine(
+        _simple_async_graph(),
+        ss,
+        as_,
+        adhoc_questions=True,
+    )
+    engine.register_role("research", SyncQuestionWorker())
+    state = engine.run(**RUN_KW)
+    assert state.status == "in_progress"

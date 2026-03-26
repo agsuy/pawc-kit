@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Mapping
 
@@ -32,6 +33,31 @@ class PhaseDefinition:
     human: bool = False
     max_feedback_rounds: int | None = None
 
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serializable dict matching workflow YAML shape for this phase."""
+        d: dict[str, Any] = {
+            "phase_id": self.phase_id,
+            "role_id": self.role_id,
+            "kind": self.kind,
+        }
+        if self.on_complete:
+            d["on_complete"] = list(self.on_complete)
+        if self.on_approve:
+            d["on_approve"] = list(self.on_approve)
+        if self.can_request_changes_from:
+            d["can_request_changes_from"] = list(self.can_request_changes_from)
+        if self.context_sources is not None:
+            d["context_sources"] = list(self.context_sources)
+        if self.role_overrides is not None:
+            d["role_overrides"] = dict(self.role_overrides)
+        if self.routing:
+            d["routing"] = [r.model_dump(mode="json", exclude_none=True) for r in self.routing]
+        if self.human:
+            d["human"] = True
+        if self.max_feedback_rounds is not None:
+            d["max_feedback_rounds"] = self.max_feedback_rounds
+        return d
+
 
 class PhaseGraph:
     """Validated workflow graph for sync and async engines."""
@@ -47,6 +73,21 @@ class PhaseGraph:
     @property
     def phase_ids(self) -> list[str]:
         return list(self._phase_ids)
+
+    @property
+    def phases(self) -> list[PhaseDefinition]:
+        """Ordered phase definitions (copy; mutating the list does not affect the graph)."""
+        return list(self._phases)
+
+    def __iter__(self) -> Iterator[PhaseDefinition]:
+        return iter(self._phases)
+
+    def __len__(self) -> int:
+        return len(self._phases)
+
+    def to_dict_list(self) -> list[dict[str, Any]]:
+        """Serialize all phases as JSON-safe dicts in graph order."""
+        return [p.to_dict() for p in self._phases]
 
     @property
     def first_phase(self) -> str | None:

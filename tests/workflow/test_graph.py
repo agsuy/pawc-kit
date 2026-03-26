@@ -531,3 +531,69 @@ def test_from_config_rejects_routing_target_not_in_on_complete() -> None:
     ]
     with pytest.raises(ConfigurationError, match="no-such"):
         PhaseGraph.from_config(phases)
+
+
+# ---------------------------------------------------------------------------
+# Public iteration and serialization
+# ---------------------------------------------------------------------------
+
+
+def test_phase_graph_phases_is_ordered_copy() -> None:
+    p1 = PhaseDefinition(phase_id="a", role_id="r1", kind="executor")
+    p2 = PhaseDefinition(phase_id="b", role_id="r2", kind="executor")
+    graph = PhaseGraph([p1, p2])
+    phases = graph.phases
+    assert [ph.phase_id for ph in phases] == ["a", "b"]
+    phases.append(
+        PhaseDefinition(phase_id="x", role_id="rx", kind="executor"),
+    )
+    assert len(graph.phases) == 2
+
+
+def test_phase_graph_iter_and_len() -> None:
+    graph = PhaseGraph(
+        [
+            PhaseDefinition(phase_id="a", role_id="r1", kind="executor"),
+            PhaseDefinition(phase_id="b", role_id="r2", kind="executor"),
+        ]
+    )
+    assert len(graph) == 2
+    assert [p.phase_id for p in graph] == ["a", "b"]
+
+
+def test_phase_definition_to_dict_minimal() -> None:
+    phase = PhaseDefinition(phase_id="work", role_id="worker", kind="executor")
+    d = phase.to_dict()
+    assert d == {"phase_id": "work", "role_id": "worker", "kind": "executor"}
+
+
+def test_phase_definition_to_dict_full_round_trip_shape() -> None:
+    rules = [RoutingRuleConfig(target="review", confidence_gte=80)]
+    phase = PhaseDefinition(
+        phase_id="work",
+        role_id="worker",
+        kind="executor",
+        on_complete=["review"],
+        context_sources=["ctx1"],
+        role_overrides={"k": "v"},
+        routing=rules,
+        human=False,
+        max_feedback_rounds=2,
+    )
+    d = phase.to_dict()
+    assert d["phase_id"] == "work"
+    assert d["on_complete"] == ["review"]
+    assert d["context_sources"] == ["ctx1"]
+    assert d["role_overrides"] == {"k": "v"}
+    assert d["routing"][0]["target"] == "review"
+    assert d["max_feedback_rounds"] == 2
+
+
+def test_phase_graph_to_dict_list_matches_phases() -> None:
+    graph = PhaseGraph(
+        [
+            PhaseDefinition(phase_id="a", role_id="r1", kind="executor"),
+            PhaseDefinition(phase_id="b", role_id="r2", kind="executor"),
+        ]
+    )
+    assert graph.to_dict_list() == [p.to_dict() for p in graph.phases]

@@ -116,6 +116,22 @@ class MemoryStateStore:
             state=self._stored.state.model_copy(deep=True), revision=self._stored.revision
         )
 
+    def list(self) -> list[StoredSession]:
+        if self._stored is None:
+            return []
+        return [
+            StoredSession(
+                state=self._stored.state.model_copy(deep=True), revision=self._stored.revision
+            )
+        ]
+
+    def delete(self, session_id: str) -> None:
+        if self._stored is None:
+            return
+        if self._stored.state.session_id != session_id:
+            return
+        self._stored = None
+
 
 class RecordingObserver:
     """WorkflowObserver that records events and validates revision ordering."""
@@ -141,6 +157,12 @@ class AsyncMemoryStateStore:
 
     async def save(self, snapshot: SessionState, *, expected_revision: str | int) -> StoredSession:
         return self._sync.save(snapshot, expected_revision=expected_revision)
+
+    async def list(self) -> list[StoredSession]:
+        return self._sync.list()
+
+    async def delete(self, session_id: str) -> None:
+        self._sync.delete(session_id)
 
 
 class AsyncMemoryArtifactStore:
