@@ -2,6 +2,132 @@
 
 <!-- version list -->
 
+## v0.5.0 (2026-03-26)
+
+### Bug Fixes
+
+- **contracts**: Export HumanReviewPending and discovery types
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- **packaging**: Include py.typed in wheel via package-data
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- **prompts**: Render finding_categories from role config extras
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+### Chores
+
+- Add missing py.typed marker file ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- Add workflow YAML template samples ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+### Code Style
+
+- Fix lint issues from refactoring ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+### Documentation
+
+- Add architecture guide and refresh README ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- Refresh contributor guide and add workflow references
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- **templates**: Link architecture guide from template index
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+### Features
+
+- Improve public API surface for workflows and persistence
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- **adapters**: Atomic fs writes and async state store support
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- **contracts**: Extend discovery, events, and artifacts
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- **llm**: Structured output parsing, retries, and backend protocol
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- **ports**: Expand artifact, runtime, and state interfaces
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- **session**: Public API exports and session wiring
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- **workflow**: Discovery engine, routing, and graph updates
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+### Refactoring
+
+- **context**: Switch save helpers to atomic_write ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- **contracts**: Make KeyArtifactRef subclass of ArtifactRef
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- **contracts**: Replace validators with NoVersionId types
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- **engine**: Extract pure-logic helpers for shared code
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- **engine**: Merge transition target resolvers into _resolve_target
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- **engine**: Unify _SyncRuntime and _AsyncRuntime into _Runtime
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- **invoker**: Extract shared _validate_bindings helper
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- **layout**: Remove LayoutManager.read_state and write_state
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- **llm**: Extract shared _LLMRoleBase and prompt helpers
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- **session**: Extract _SessionConfig for shared resolution
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- **state**: Apply OptionalSemVerStr to version fields
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- **tests**: Consolidate duplicated helpers into conftest
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+- **workflow**: Remove deprecated ExecutionContext and ReviewContext
+  ([#5](https://github.com/agsuy/pawc-kit/pull/5),
+  [`d26335b`](https://github.com/agsuy/pawc-kit/commit/d26335b9627cea849221449797c420f12bf0ead9))
+
+
 ## v0.4.0 (2026-03-24)
 
 ### Chores

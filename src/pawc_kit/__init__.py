@@ -12,7 +12,7 @@ from pawc_kit.async_session import AsyncWorkflowSession
 from pawc_kit.config import load_role_config, load_root_config, load_yaml_config
 from pawc_kit.session import WorkflowSession
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 logging.getLogger("pawc_kit").addHandler(logging.NullHandler())
 
