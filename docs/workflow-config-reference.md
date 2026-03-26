@@ -2,6 +2,8 @@
 
 This document describes **every field** on [`RootConfig`](../src/pawc_kit/contracts/config.py) — the schema behind the pawc-kit native `config.yaml` format.
 
+For how pawc-kit layers fit together (contracts, ports, workflow, session), see [architecture.md](architecture.md).
+
 For an index of example YAML (native skill config, discovery, roles), see [`templates/README.md`](../templates/README.md).
 
 **Canonical source of truth:** the Pydantic models in `pawc_kit.contracts.config` (validated on load). A commented walk-through lives in [`templates/workflow/config-reference.yaml`](../templates/workflow/config-reference.yaml).

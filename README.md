@@ -1,10 +1,10 @@
 # pawc-kit
 
-`pawc-kit` is a Python library for building multi-phase execution and review workflows with a stable public API, filesystem-backed default adapters, and a stable LLM integration namespace.
+`pawc-kit` is a Python library for **multi-phase execution and review workflows**: execution graphs from native `config.yaml`, **discovery** graphs from `DiscoveryConfig`, filesystem-backed default adapters, and a stable **LLM** integration layer (backends, structured output, prompt assembly, LLM roles). Sync and **async** engines and sessions are both first-class.
 
 The supported public surface is:
 
-- `pawc_kit` (slim: version, `utc_now`, config loaders, session types)
+- `pawc_kit` (slim: version, `utc_now`, config loaders, `WorkflowSession`, `AsyncWorkflowSession`)
 - `pawc_kit.config`
 - `pawc_kit.contracts`
 - `pawc_kit.workflow`
@@ -13,7 +13,7 @@ The supported public surface is:
 - `pawc_kit.context`
 - `pawc_kit.llm`
 
-Example YAML by schema (`RootConfig`, `DiscoveryConfig`, `RoleConfig`) lives under [`templates/`](templates/) — see [`templates/README.md`](templates/README.md). The narrative reference for native skill `config.yaml` is [`docs/workflow-config-reference.md`](docs/workflow-config-reference.md). For the HTTP control plane and server-side templates, see the **pawc-server** repository (`docs/architecture.md`, `templates/README.md`).
+Example YAML by schema (`RootConfig`, `DiscoveryConfig`, `RoleConfig`) lives under [`templates/`](templates/) — see [`templates/README.md`](templates/README.md). Field-by-field native `config.yaml` reference: [`docs/workflow-config-reference.md`](docs/workflow-config-reference.md). **How the library is layered** (contracts → ports → workflow → adapters): [`docs/architecture.md`](docs/architecture.md). For the HTTP control plane and server-side deployment, see the **pawc-server** repository (`docs/architecture.md`, `templates/README.md`).
 
 ## Install
 
@@ -103,6 +103,17 @@ session = WorkflowSession.from_config(
 `WorkflowSession.run()` is resumable — calling it again with the same
 `session_id` picks up where it left off.
 
+Async equivalent (`from_config` is synchronous; `run` is async):
+
+```python
+from pawc_kit import AsyncWorkflowSession
+
+session = AsyncWorkflowSession.from_config("config.yaml")
+session.register_role("worker", my_async_worker)
+session.register_role("reviewer", my_async_reviewer)
+state = await session.run(session_id="run-001")
+```
+
 ### Low-level engine usage
 
 For full control over stores and paths, use `WorkflowEngine` directly:
@@ -141,7 +152,7 @@ You can pass a `ContextPack` into `session.run(context_pack=pack)` or `engine.ru
 - `load_yaml_config`, `load_root_config`, `load_role_config`
 - `RootConfig`, `SkillConfig`, `ContextConfig`, `EfficiencyConfig`, `RoleConfig`
 - `ContextInjectionConfig`, `CompressionConfig`, `ChunkPolicyConfig`
-- `WorkflowSession`
+- `WorkflowSession`, `AsyncWorkflowSession`
 - `LayoutManager`
 - `ContextPack`, `load_context_pack`, `accessible_packs`
 - `check_quality_gates`, `validate_composition`
@@ -149,11 +160,14 @@ You can pass a `ContextPack` into `session.run(context_pack=pack)` or `engine.ru
 ### Contracts
 
 - `SessionState`, `IterationEntry`, `ReviewEntry`, `ArtifactRef`
-- `DecisionPayload`, `HandoffContext`
+- `DecisionPayload`, `HandoffContext`, handoff artifact types (`HandoffArtifact`, …)
+- **Discovery:** `DiscoveryConfig`, `DiscoveryPhaseConfig`, `QuestionEntry`, …
+- **Events:** `RunStarted`, `RunCompleted`, `PhaseStarted`, `IterationCommitted`, `ReviewCommitted`, … plus `event_to_dict` / `event_from_dict` helpers
+- **Errors:** `PawcError`, `LLMError`, `ConcurrencyError`, …
 
 ### Workflow
 
-- `PhaseDefinition`, `PhaseGraph`
+- `PhaseDefinition`, `PhaseGraph` (including discovery-shaped graphs when built from `DiscoveryConfig`)
 - `ExecutionContext`, `ReviewContext`
 - `ExecutionResult`, `ReviewDecision`, `ReviewResult`
 - `WorkflowEngine`, `AsyncWorkflowEngine`
@@ -205,8 +219,16 @@ role = load_role_config("worker/config.yaml")     # -> RoleConfig
 LLM helpers are available under the stable namespace:
 
 ```python
-from pawc_kit.llm import MockBackend, LLMExecutorRole, LLMReviewerRole
+from pawc_kit.llm import (
+    MockBackend,
+    LLMExecutorRole,
+    LLMReviewerRole,
+    StructuredOutput,
+    AsyncStructuredOutput,
+)
 ```
+
+Backends implement `LLMBackend` / `AsyncLLMBackend` (`complete(..., max_tokens: int | None = None)`). `StructuredOutput` / `AsyncStructuredOutput` call the backend, parse JSON into Pydantic models (trying multiple fenced blocks / extractions), and retry on validation failure; async structured output supports optional exponential backoff between retries (`retry_delay` on `AsyncStructuredOutput`).
 
 ### Context injection and compression
 
@@ -311,6 +333,8 @@ Design notes:
 - `AsyncOpenTelemetryWorkflowObserver` delegates to the sync observer (OTEL SDK calls are CPU-bound)
 
 ## Architecture
+
+**Narrative and diagrams:** [`docs/architecture.md`](docs/architecture.md) (execution vs discovery config, async vs sync, related docs).
 
 The public architecture is split into layers:
 

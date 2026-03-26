@@ -2,6 +2,8 @@
 
 > Last updated: 2026-03-25
 
+**See also:** [architecture.md](architecture.md) for pawc-kit layering and how the LLM package fits into the workflow engine.
+
 ## Motivation
 
 PAWC's current `AsyncLLMBackend` protocol is **stateless single-turn**: it sends
