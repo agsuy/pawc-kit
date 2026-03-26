@@ -62,6 +62,7 @@ class AsyncWorkflowSession:
         max_iterations: int | None = None,
         max_feedback_rounds: int | None = None,
         confidence_floor: int | None | UnsetType = UNSET,
+        artifact_backfill_retries: int | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> AsyncWorkflowSession:
         """Load config from disk and return a ready async session."""
@@ -80,6 +81,7 @@ class AsyncWorkflowSession:
             max_iterations=max_iterations,
             max_feedback_rounds=max_feedback_rounds,
             confidence_floor=confidence_floor,
+            artifact_backfill_retries=artifact_backfill_retries,
             metadata=metadata,
         )
 
@@ -99,6 +101,7 @@ class AsyncWorkflowSession:
         max_iterations: int | None = None,
         max_feedback_rounds: int | None = None,
         confidence_floor: int | None | UnsetType = UNSET,
+        artifact_backfill_retries: int | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
         self._sc = _SessionConfig.resolve(
@@ -110,12 +113,11 @@ class AsyncWorkflowSession:
             max_iterations=max_iterations,
             max_feedback_rounds=max_feedback_rounds,
             confidence_floor=confidence_floor,
+            artifact_backfill_retries=artifact_backfill_retries,
             metadata=metadata,
         )
 
-        _SessionConfig.warn_backend_ignored(
-            backend, run_directory, state_filename
-        )
+        _SessionConfig.warn_backend_ignored(backend, run_directory, state_filename)
         self._backend = backend
 
         self._observer: AsyncWorkflowObserver | None
@@ -134,14 +136,11 @@ class AsyncWorkflowSession:
         """The validated root config."""
         return self._sc.config
 
-    def register_role(
-        self, role_id: str, role: AsyncExecutor | AsyncReviewer
-    ) -> None:
+    def register_role(self, role_id: str, role: AsyncExecutor | AsyncReviewer) -> None:
         """Bind an async role implementation to a role_id."""
         if self._explicit_invoker:
             raise ConfigurationError(
-                "register_role() is not supported when an explicit "
-                "invoker is provided"
+                "register_role() is not supported when an explicit invoker is provided"
             )
         self._role_bindings[role_id] = role
 
@@ -184,12 +183,15 @@ class AsyncWorkflowSession:
             graph=self._sc.graph,
             state_store=resolved.state_store,
             artifact_store=resolved.artifact_store,
+            artifact_reader=resolved.artifact_reader,
+            artifact_writer=resolved.artifact_writer,
             observer=self._observer,
             clock=self._clock,
             confidence_threshold=self._sc.confidence_threshold,
             max_iterations=self._sc.max_iterations,
             max_feedback_rounds=self._sc.max_feedback_rounds,
             confidence_floor=self._sc.confidence_floor,
+            artifact_backfill_retries=self._sc.artifact_backfill_retries,
             metadata=self._sc.metadata,
             invoker=async_invoker,
             controller=self._controller,

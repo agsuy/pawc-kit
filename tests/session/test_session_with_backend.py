@@ -66,6 +66,15 @@ class _InMemoryStateStore:
         self._revisions[session_metadata.session_id] = 0
         return StoredSession(state=state, revision=0)
 
+    def list(self) -> list[StoredSession]:
+        return [
+            StoredSession(state=s, revision=self._revisions[sid]) for sid, s in self._states.items()
+        ]
+
+    def delete(self, session_id: str) -> None:
+        self._states.pop(session_id, None)
+        self._revisions.pop(session_id, None)
+
 
 class _InMemoryArtifactStore:
     """Minimal in-memory ArtifactStore: stores bytes by ref string."""
@@ -155,6 +164,12 @@ class _SpyAsyncRuntimeBackend:
 
             async def initialize(self, session_metadata: SessionMetadata) -> StoredSession:
                 return self._inner.initialize(session_metadata)
+
+            async def list(self) -> list[StoredSession]:
+                return self._inner.list()
+
+            async def delete(self, session_id: str) -> None:
+                self._inner.delete(session_id)
 
         class _AsyncArtifactStoreAdapter:
             def __init__(self, inner: _InMemoryArtifactStore) -> None:

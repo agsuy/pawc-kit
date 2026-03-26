@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pawc_kit.adapters.fs._io import atomic_write
+from pawc_kit._fs_atomic import atomic_write
 from pawc_kit.config import load_root_config
 from pawc_kit.contracts.artifacts import HandoffArtifact, HandoffContext
 from pawc_kit.contracts.config import RootConfig

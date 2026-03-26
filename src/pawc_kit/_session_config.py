@@ -25,6 +25,7 @@ class _SessionConfig:
     max_iterations: int
     max_feedback_rounds: int
     confidence_floor: int | None
+    artifact_backfill_retries: int
     metadata: Mapping[str, Any] | None
 
     @classmethod
@@ -39,6 +40,7 @@ class _SessionConfig:
         max_iterations: int | None,
         max_feedback_rounds: int | None,
         confidence_floor: int | None | UnsetType,
+        artifact_backfill_retries: int | None,
         metadata: Mapping[str, Any] | None,
     ) -> _SessionConfig:
         wf = config.workflow
@@ -49,8 +51,7 @@ class _SessionConfig:
             resolved_graph = PhaseGraph.from_config(wf.phases)
         else:
             raise ConfigurationError(
-                "No workflow graph provided: pass graph= "
-                "or define workflow.phases in config.yaml"
+                "No workflow graph provided: pass graph= or define workflow.phases in config.yaml"
             )
 
         resolved_floor: int | None
@@ -62,32 +63,23 @@ class _SessionConfig:
         return cls(
             config=config,
             graph=resolved_graph,
-            run_directory=(
-                run_directory
-                if run_directory is not None
-                else wf.run_directory
-            ),
-            state_filename=(
-                state_filename
-                if state_filename is not None
-                else wf.state_filename
-            ),
+            run_directory=(run_directory if run_directory is not None else wf.run_directory),
+            state_filename=(state_filename if state_filename is not None else wf.state_filename),
             confidence_threshold=(
                 confidence_threshold
                 if confidence_threshold is not None
                 else wf.confidence_threshold
             ),
-            max_iterations=(
-                max_iterations
-                if max_iterations is not None
-                else wf.max_iterations
-            ),
+            max_iterations=(max_iterations if max_iterations is not None else wf.max_iterations),
             max_feedback_rounds=(
-                max_feedback_rounds
-                if max_feedback_rounds is not None
-                else wf.max_feedback_rounds
+                max_feedback_rounds if max_feedback_rounds is not None else wf.max_feedback_rounds
             ),
             confidence_floor=resolved_floor,
+            artifact_backfill_retries=(
+                artifact_backfill_retries
+                if artifact_backfill_retries is not None
+                else wf.artifact_backfill_retries
+            ),
             metadata=metadata,
         )
 
@@ -97,9 +89,7 @@ class _SessionConfig:
         run_directory: str | None,
         state_filename: str | None,
     ) -> None:
-        if backend is not None and (
-            run_directory is not None or state_filename is not None
-        ):
+        if backend is not None and (run_directory is not None or state_filename is not None):
             warnings.warn(
                 "run_directory and state_filename are ignored "
                 "when an explicit backend is provided.",
@@ -110,9 +100,7 @@ class _SessionConfig:
     def load_context(self, context_id: str) -> ContextPack:
         """Load a context pack using config's ``state_directory``."""
         if not self.config.state_directory:
-            raise ConfigurationError(
-                "state_directory is required to load a context pack"
-            )
+            raise ConfigurationError("state_directory is required to load a context pack")
         return load_context_pack(
             self.config.state_directory,
             context_id,
