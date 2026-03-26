@@ -50,7 +50,14 @@ class EfficiencyConfig(BaseModel):
 
     prompt_verbosity: Literal["full", "json", "jsonl", "compact"] = "compact"
     schema_format: Literal["full", "abbreviated", "none"] = "abbreviated"
-    context_window: int | None = None
+    max_history_entries: int | None = Field(
+        default=None,
+        description=(
+            "When set, context_section() keeps only this many recent iteration entries "
+            "and (separately) this many review entries in full; older rows collapse to a "
+            "short summary. Not a token or character limit."
+        ),
+    )
     phase_filter: bool = True
     output_budget: bool = True
 
@@ -174,6 +181,7 @@ class WorkflowConfig(BaseModel):
     max_iterations: int = Field(10, ge=1)
     max_feedback_rounds: int = Field(3, ge=0)
     confidence_floor: int | None = None
+    artifact_backfill_retries: int = Field(1, ge=0)
     run_directory: str = "sessions/execution"
     state_filename: str = "state.json"
 

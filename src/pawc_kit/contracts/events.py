@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal, TypeGuard, get_args
 
 
 @dataclass(frozen=True)
@@ -123,7 +124,7 @@ class RunCompleted:
     """Run reached a terminal state and was durably persisted."""
 
     session_id: str
-    status: Literal["completed", "abandoned"]
+    status: Literal["completed", "abandoned", "failed"]
     feedback_loops: int
     revision: str | int
     started_at: str
@@ -158,6 +159,46 @@ WorkflowEvent = (
     | RunFailed
 )
 
+_EVENT_TYPES: tuple[type, ...] = get_args(WorkflowEvent)
+_EVENT_BY_NAME: dict[str, type] = {cls.__name__: cls for cls in _EVENT_TYPES}
+
+
+def event_to_dict(event: WorkflowEvent) -> dict[str, Any]:
+    """Serialize a workflow event to a JSON-friendly dict including ``event_type``."""
+    d = dataclasses.asdict(event)
+    d["event_type"] = type(event).__name__
+    return d
+
+
+def event_from_dict(data: dict[str, Any]) -> WorkflowEvent:
+    """Deserialize a dict produced by :func:`event_to_dict` (or equivalent)."""
+    raw = dict(data)
+    event_type = raw.pop("event_type", None) or raw.pop("type", None)
+    if not event_type or not isinstance(event_type, str):
+        msg = "Missing or invalid event_type"
+        raise ValueError(msg)
+    cls = _EVENT_BY_NAME.get(event_type)
+    if cls is None:
+        msg = f"Unknown event type: {event_type}"
+        raise ValueError(msg)
+    return cls(**raw)
+
+
+def is_workflow_event(obj: object) -> TypeGuard[WorkflowEvent]:
+    """Return True if *obj* is a known :data:`WorkflowEvent` variant."""
+    return isinstance(obj, _EVENT_TYPES)
+
+
+def event_timestamp(event: WorkflowEvent) -> str:
+    """Return the primary timestamp field for *event* (completed, ended, or occurred)."""
+    for attr in ("completed_at", "ended_at", "occurred_at"):
+        val = getattr(event, attr, None)
+        if val is not None:
+            return val  # type: ignore[no-any-return]
+    msg = f"No timestamp field on {type(event).__name__}"
+    raise ValueError(msg)
+
+
 __all__ = [
     "HumanReviewPending",
     "IterationCommitted",
@@ -169,4 +210,8 @@ __all__ = [
     "RunResumed",
     "RunStarted",
     "WorkflowEvent",
+    "event_from_dict",
+    "event_timestamp",
+    "event_to_dict",
+    "is_workflow_event",
 ]

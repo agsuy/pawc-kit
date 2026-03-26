@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field, model_validator
 
 from pawc_kit._versioning import NoVersionId, OptionalSemVerStr, SemVerStr
 
+_SessionStatus = Literal["initialized", "in_progress", "completed", "abandoned", "failed"]
+
 
 class ArtifactRef(BaseModel):
     """Artifact reference: type, ref (relative path), description."""
@@ -75,7 +77,7 @@ class SessionState(BaseModel):
     reviews: list[ReviewEntry] = Field(default_factory=list)
     feedback_loops: int = Field(0, ge=0)
     data_commands: list[DataCommandEntry] | None = None
-    status: Literal["initialized", "in_progress", "completed", "abandoned", "failed"] = "initialized"
+    status: _SessionStatus = "initialized"
     completed_at: str | None = None
     metrics: dict | None = None
     run_metadata: dict[str, Any] | None = None

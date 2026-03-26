@@ -2,6 +2,7 @@
 
 from pawc_kit.contracts.artifacts import (
     DecisionPayload,
+    FileArtifact,
     FindingEntry,
     HandoffArtifact,
     HandoffArtifactMetadata,
@@ -55,6 +56,10 @@ from pawc_kit.contracts.events import (
     RunResumed,
     RunStarted,
     WorkflowEvent,
+    event_from_dict,
+    event_timestamp,
+    event_to_dict,
+    is_workflow_event,
 )
 from pawc_kit.contracts.execution import ContextPayload, ExecutionRequest, ReviewRequest
 from pawc_kit.contracts.state import (
@@ -83,6 +88,7 @@ __all__ = [
     "DiscoveryPhaseConfig",
     "EfficiencyConfig",
     "ExecutionRequest",
+    "FileArtifact",
     "FindingEntry",
     "HandoffArtifact",
     "HandoffArtifactMetadata",
@@ -118,4 +124,8 @@ __all__ = [
     "TransitionError",
     "WorkflowConfig",
     "WorkflowEvent",
+    "event_from_dict",
+    "event_timestamp",
+    "event_to_dict",
+    "is_workflow_event",
 ]
