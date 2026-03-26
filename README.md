@@ -4,17 +4,16 @@
 
 The supported public surface is:
 
-- `pawc_kit`
+- `pawc_kit` (slim: version, `utc_now`, config loaders, session types)
 - `pawc_kit.config`
 - `pawc_kit.contracts`
 - `pawc_kit.workflow`
 - `pawc_kit.ports`
-- `pawc_kit.adapters.fs`
-- `pawc_kit.adapters.logging`
-- `pawc_kit.adapters.otel`
+- `pawc_kit.adapters` (built-in adapters; submodules like `adapters.fs` remain valid)
+- `pawc_kit.context`
 - `pawc_kit.llm`
 
-Maintainer notes on spec gaps and deferred features (discovery, context-pack write-side): [`docs/roadmap.md`](docs/roadmap.md).
+Example YAML by schema (`RootConfig`, `DiscoveryConfig`, `RoleConfig`) lives under [`templates/`](templates/) — see [`templates/README.md`](templates/README.md). The narrative reference for native skill `config.yaml` is [`docs/workflow-config-reference.md`](docs/workflow-config-reference.md). For the HTTP control plane and server-side templates, see the **pawc-server** repository (`docs/architecture.md`, `templates/README.md`).
 
 ## Install
 
@@ -110,8 +109,8 @@ For full control over stores and paths, use `WorkflowEngine` directly:
 
 ```python
 from pathlib import Path
-from pawc_kit import WorkflowEngine
 from pawc_kit.adapters.fs import FsArtifactStore, FsStateStore
+from pawc_kit.workflow import WorkflowEngine
 
 run_dir = Path(".tmp") / "demo-run"
 engine = WorkflowEngine(graph, FsStateStore(run_dir), FsArtifactStore(run_dir))
@@ -245,7 +244,7 @@ The `otel` value requires `pawc-kit[otel]`. An explicit `observer=` kwarg on `Wo
 ```python
 import logging
 
-from pawc_kit.adapters.logging import LoggingWorkflowObserver
+from pawc_kit.adapters import LoggingWorkflowObserver
 
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("pawc_kit.workflow").setLevel(logging.DEBUG)
@@ -271,7 +270,7 @@ Default logging adapter level mapping:
 Requires `pawc-kit[otel]`. Handles all 8 workflow event types with **metrics** (counters and histograms) and **traces** (nested spans).
 
 ```python
-from pawc_kit.adapters.otel import OpenTelemetryWorkflowObserver
+from pawc_kit.adapters import OpenTelemetryWorkflowObserver
 
 observer = OpenTelemetryWorkflowObserver(
     meter_name="pawc_kit.workflow",

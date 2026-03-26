@@ -52,9 +52,60 @@ after any manual edit.
 
 ## Tooling
 
-- Use `pyenv` for interpreter pinning.
+- **Python:** `3.12` or newer (`requires-python = ">=3.12"` in `pyproject.toml`).
+- Use `pyenv` for interpreter pinning (optional but recommended).
 - Use `uv` for environment management, dependency sync, and local tool execution.
 - Prefer `uv run` for repo-local commands.
+
+## Getting started (from zero)
+
+1. **Clone** the repository and `cd` into it.
+2. **(Optional)** Install and select Python 3.12+ with pyenv, for example:
+   - `pyenv install 3.12.13` (or another 3.12.x)
+   - `pyenv local 3.12.13` in the repo root
+3. **Sync** the dev environment (installs Ruff, Pyright, pytest, coverage, optional extras from `[dependency-groups]`):
+   ```bash
+   uv sync --dev
+   ```
+4. **(Optional)** Add feature extras on top of dev (same as README):
+   ```bash
+   uv sync --dev --extra otel
+   uv sync --dev --extra semantic
+   ```
+
+After this, `uv run …` and the `scripts/*.sh` helpers use the project `.venv`.
+
+## Tests and pytest markers
+
+Default test runs use **`scripts/test.sh`**, which invokes `pytest` with coverage on `pawc_kit`. Pytest options are configured in **`pyproject.toml`** (`[tool.pytest.ini_options]`).
+
+- **Default filter:** `addopts` includes `-m 'not llm_paid'`, so tests marked **`llm_paid`** are skipped unless you override.
+- **Declared markers:**
+  - `unit` — fast isolated tests
+  - `integration` — tests using real filesystem adapters
+  - `slow` — longer-running tests
+  - `llm_local` — local LLM backends (Ollama, etc.)
+  - `llm_paid` — paid API calls (excluded by default)
+
+Examples (extra arguments are forwarded by `scripts/test.sh`):
+
+```bash
+# Only integration tests (still respects default exclusion of llm_paid)
+uv run python -m pytest -m integration
+
+# Same via the helper (coverage flags preserved)
+scripts/test.sh -m integration
+
+# Drop default addopts so llm_paid tests are not excluded (set API keys as tests require)
+uv run python -m pytest --override-ini="addopts="
+```
+
+CI and `scripts/verify.sh` expect **line coverage ≥ 90%** on `pawc_kit` (`fail_under` in `pyproject.toml`).
+
+## Code style and static typing
+
+- **Ruff** (lint + format): `scripts/lint.sh` applies fixes and formats; `scripts/lint-check.sh` checks without writing. Configuration is **`[tool.ruff]`** in `pyproject.toml`: target Python 3.12, line length **100**, rules **`E`, `F`, `I`** (pycodestyle errors, Pyflakes, isort). Do not change rule selection in PRs without maintainer agreement.
+- **Pyright**: `scripts/type-check.sh` runs **`uv run pyright`** with **`pyrightconfig.json`**. The repo uses **`typeCheckingMode: "basic"`**; **`reportMissingImports` is `error`**. Under `tests/`, several report diagnostics are relaxed so tests can use flexible fixtures; production code under `src/pawc_kit` should stay cleanly typed. Avoid blanket `# type: ignore` unless there is a short, reviewable reason.
 
 ## Local Workflow
 
