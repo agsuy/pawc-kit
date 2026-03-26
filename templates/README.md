@@ -2,6 +2,8 @@
 
 YAML examples grouped by the Pydantic model that validates them. Paths are relative to this directory.
 
+Library layering (contracts, ports, workflow, session): [`docs/architecture.md`](../docs/architecture.md).
+
 ## `workflow/` — [`RootConfig`](../src/pawc_kit/contracts/config.py) (native `config.yaml`)
 
 Load with `WorkflowSession.from_config(path)` / `AsyncWorkflowSession.from_config(path)` (or `load_root_config`).
