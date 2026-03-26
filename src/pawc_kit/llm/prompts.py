@@ -210,7 +210,7 @@ def context_section(
 ) -> str:
     verbosity = efficiency.prompt_verbosity if efficiency else "full"
     do_filter = efficiency.phase_filter if efficiency else False
-    window = efficiency.context_window if efficiency else None
+    max_entries = efficiency.max_history_entries if efficiency else None
 
     iterations = list(ctx.history.iterations)
     reviews = list(ctx.history.reviews)
@@ -228,13 +228,13 @@ def context_section(
 
     iter_summary = ""
     review_summary = ""
-    if window is not None:
-        if len(iter_dicts) > window:
-            iter_summary = _build_windowed_summary(iter_dicts[:-window], "iterations")
-            iter_dicts = iter_dicts[-window:]
-        if len(review_dicts) > window:
-            review_summary = _build_windowed_summary(review_dicts[:-window], "reviews")
-            review_dicts = review_dicts[-window:]
+    if max_entries is not None:
+        if len(iter_dicts) > max_entries:
+            iter_summary = _build_windowed_summary(iter_dicts[:-max_entries], "iterations")
+            iter_dicts = iter_dicts[-max_entries:]
+        if len(review_dicts) > max_entries:
+            review_summary = _build_windowed_summary(review_dicts[:-max_entries], "reviews")
+            review_dicts = review_dicts[-max_entries:]
 
     parts = [f"Session: {ctx.session.session_id} | Phase: {ctx.phase.phase_id}"]
 
@@ -473,6 +473,7 @@ class DefaultPromptAssembler:
         role_config: RoleConfig | None = None,
         *,
         quality_gates: dict | None = None,
+        finding_categories: list[str] | None = None,
         efficiency: EfficiencyConfig | None = None,
         injection: ContextInjectionConfig | None = None,
         compressor: ContextCompressor | None = None,
@@ -499,6 +500,12 @@ class DefaultPromptAssembler:
                 f"Quality Gates: If your findings include more than {critical} "
                 f"critical or more than {high} high severity issues, "
                 f"your decision MUST be REQUEST_CHANGES."
+            )
+        if finding_categories:
+            joined = ", ".join(finding_categories)
+            system_parts.append(
+                "Finding categories (use only these category names for findings when applicable): "
+                f"{joined}."
             )
         if not skip_schema:
             schema_fmt = efficiency.schema_format if efficiency else "full"

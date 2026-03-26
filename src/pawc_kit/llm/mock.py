@@ -44,7 +44,7 @@ class MockBackend:
         user: str,
         *,
         response_schema: type[BaseModel] | None = None,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
     ) -> CompletionResult:
         """Return the next queued response.
 
@@ -111,7 +111,7 @@ class AsyncMockBackend:
         user: str,
         *,
         response_schema: type[BaseModel] | None = None,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
     ) -> CompletionResult:
         """Return the next queued response. Raises :class:`LLMError` if the queue is empty."""
         return self._sync.complete(

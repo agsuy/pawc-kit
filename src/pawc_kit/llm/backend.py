@@ -65,7 +65,7 @@ class LLMBackend(Protocol):
         user: str,
         *,
         response_schema: type[BaseModel] | None = None,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
     ) -> CompletionResult: ...
 
     def capabilities(self) -> BackendCapabilities: ...
@@ -84,7 +84,7 @@ class AsyncLLMBackend(Protocol):
         user: str,
         *,
         response_schema: type[BaseModel] | None = None,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
     ) -> CompletionResult: ...
 
     def capabilities(self) -> BackendCapabilities: ...
