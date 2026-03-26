@@ -3,8 +3,10 @@
 from pawc_kit.ports.artifacts import (
     ArtifactReader,
     ArtifactStore,
+    ArtifactWriter,
     AsyncArtifactReader,
     AsyncArtifactStore,
+    AsyncArtifactWriter,
 )
 from pawc_kit.ports.clock import AsyncClock, Clock
 from pawc_kit.ports.compressor import ContextCompressor
@@ -23,8 +25,10 @@ from pawc_kit.ports.state import AsyncStateStore, SessionMetadata, StateStore, S
 __all__ = [
     "ArtifactReader",
     "ArtifactStore",
+    "ArtifactWriter",
     "AsyncArtifactReader",
     "AsyncArtifactStore",
+    "AsyncArtifactWriter",
     "AsyncClock",
     "AsyncResolvedBackend",
     "AsyncRoleInvoker",

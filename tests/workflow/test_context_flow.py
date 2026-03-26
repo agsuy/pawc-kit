@@ -95,7 +95,7 @@ def _build_engine(
 
 
 def test_context_pack_reaches_executor_role() -> None:
-    """ContextPack passed to engine.run() is available in ExecutionContext.context."""
+    """ContextPack passed to engine.run() reaches the executor role."""
     pack = _make_pack("spec-123", request_files={"prompt.md": "Build X"})
     worker = ContextCapturingWorker()
     reviewer = ContextCapturingReviewer()
@@ -118,7 +118,7 @@ def test_context_pack_reaches_executor_role() -> None:
 
 
 def test_context_pack_reaches_reviewer_role() -> None:
-    """ContextPack is available in ReviewContext.context."""
+    """ContextPack passed to engine.run() reaches the reviewer role."""
     pack = _make_pack("spec-456", request_files={"review.md": "Review criteria"})
     worker = ContextCapturingWorker()
     reviewer = ContextCapturingReviewer()

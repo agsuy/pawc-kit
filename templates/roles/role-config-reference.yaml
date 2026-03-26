@@ -1,0 +1,78 @@
+# ============================================================================
+# pawc-kit  templates/roles/role-config-reference.yaml  --  Full RoleConfig field reference
+# ============================================================================
+#
+# Per-role YAML (RoleConfig), not RootConfig — native skill/config.yaml fields are in
+# docs/workflow-config-reference.md (RootConfig) and templates/workflow/config-reference.yaml.
+#
+# RoleConfig lives at pawc_kit.contracts.config.RoleConfig.
+# It uses Pydantic's extra="allow", so any additional fields beyond the named
+# ones are accepted and stored.  This makes role configs extensible without
+# changing the kit schema.
+#
+# Role configs are typically stored one-per-file (e.g. roles/worker.yaml) and
+# loaded into a dict[str, RoleConfig] keyed by role_id.  Both kit sessions
+# and server templates consume this shape.
+#
+# Usage in kit:
+#   from pawc_kit.contracts.config import RoleConfig
+#   import yaml
+#   with open("roles/worker.yaml") as f:
+#       cfg = RoleConfig.model_validate(yaml.safe_load(f))
+#
+# Usage in LLM roles:
+#   role = AsyncLLMExecutorRole(backend=llm, role_configs={"worker-role": cfg})
+# ============================================================================
+
+
+# ---------------------------------------------------------------------------
+# Named fields (defined on the RoleConfig BaseModel)
+# ---------------------------------------------------------------------------
+
+name: code-reviewer                 # str, required -- human-readable role name
+version: "1.0.0"                    # str, required, must be valid semver
+
+# expertise: []                     # list[str], default []
+                                    #   Domain expertise keywords
+expertise:
+  - python
+  - code-review
+  - security
+
+# focus: []                         # list[str], default []
+                                    #   Areas this role should prioritize
+focus:
+  - correctness
+  - maintainability
+  - test-coverage
+
+# guidelines: []                    # list[str], default []
+                                    #   Instructions baked into the role prompt
+guidelines:
+  - Always cite line numbers when referencing code
+  - Prefer concrete suggestions over vague advice
+  - Flag security issues as critical findings
+
+# review_criteria: []               # list[str], default []
+                                    #   Criteria for review-kind phases
+review_criteria:
+  - Code follows project style guide
+  - No unhandled error paths
+  - Tests cover the changed behaviour
+
+
+# ---------------------------------------------------------------------------
+# Custom fields (extra="allow")
+# ---------------------------------------------------------------------------
+# Any additional keys are accepted and stored on the model.  This is the
+# extension point for domain-specific configuration.  Common patterns:
+
+# model: gpt-4o                     # LLM model override for this role
+# temperature: 0.2                  # Sampling temperature
+# max_tokens: 4096                  # Max output tokens
+# system_prompt: |                  # Full system prompt override
+#   You are a senior code reviewer...
+# output_format: json               # Hint for structured output
+# tools:                            # Tool/function-calling config
+#   - name: search_codebase
+#     description: Search the repo

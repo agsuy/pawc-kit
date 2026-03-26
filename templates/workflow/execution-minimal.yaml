@@ -1,0 +1,34 @@
+# ============================================================================
+# pawc-kit  templates/workflow/execution-minimal.yaml  --  Simplest viable execution workflow
+# ============================================================================
+#
+# Native RootConfig — see docs/workflow-config-reference.md for all fields.
+#
+# Two phases: an executor that does the work and a reviewer that approves or
+# requests changes.  Only required fields are present -- a clean starting
+# point for new skills.
+#
+# Load with:
+#   session = WorkflowSession.from_config("templates/workflow/execution-minimal.yaml")
+#   session.run(skill_name="my-skill", skill_version="1.0.0", prompt="...")
+# ============================================================================
+
+skill:
+  name: minimal-skill
+  version: "1.0.0"
+
+state_directory: ./runs
+
+workflow:
+  phases:
+    - phase_id: work
+      role_id: worker-role
+      kind: executor
+      on_complete:
+        - review
+
+    - phase_id: review
+      role_id: reviewer-role
+      kind: review
+      can_request_changes_from:
+        - work

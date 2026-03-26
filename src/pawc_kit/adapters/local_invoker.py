@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Mapping
 
 from pawc_kit.contracts.errors import ConfigurationError, TransitionError
 from pawc_kit.workflow.roles import (
@@ -17,6 +17,30 @@ from pawc_kit.workflow.roles import (
 if TYPE_CHECKING:
     from pawc_kit.contracts.execution import ExecutionRequest, ReviewRequest
     from pawc_kit.workflow.graph import PhaseGraph
+
+
+def _validate_bindings(
+    bindings: Mapping[str, object],
+    graph: "PhaseGraph",
+    executor_type: type,
+    reviewer_type: type,
+) -> None:
+    """Raise ``ConfigurationError`` if any phase lacks a valid binding."""
+    for phase_id in graph.phase_ids:
+        phase = graph.get(phase_id)
+        role = bindings.get(phase.role_id)
+        if role is None:
+            raise ConfigurationError(
+                f"Phase {phase.phase_id!r} references unregistered role_id {phase.role_id!r}"
+            )
+        if phase.kind == "executor" and not isinstance(role, executor_type):
+            raise ConfigurationError(
+                f"role_id {phase.role_id!r} is bound to a non-executor implementation"
+            )
+        if phase.kind == "review" and not isinstance(role, reviewer_type):
+            raise ConfigurationError(
+                f"role_id {phase.role_id!r} is bound to a non-reviewer implementation"
+            )
 
 
 class LocalRoleInvoker:
@@ -38,22 +62,7 @@ class LocalRoleInvoker:
         self._bindings[role_id] = role
 
     def validate(self, graph: PhaseGraph) -> None:
-        """Raise ``ConfigurationError`` if any phase lacks a valid binding."""
-        for phase_id in graph.phase_ids:
-            phase = graph.get(phase_id)
-            role = self._bindings.get(phase.role_id)
-            if role is None:
-                raise ConfigurationError(
-                    f"Phase {phase.phase_id!r} references unregistered role_id {phase.role_id!r}"
-                )
-            if phase.kind == "executor" and not isinstance(role, Executor):
-                raise ConfigurationError(
-                    f"role_id {phase.role_id!r} is bound to a non-executor implementation"
-                )
-            if phase.kind == "review" and not isinstance(role, Reviewer):
-                raise ConfigurationError(
-                    f"role_id {phase.role_id!r} is bound to a non-reviewer implementation"
-                )
+        _validate_bindings(self._bindings, graph, Executor, Reviewer)
 
     def invoke_executor(self, req: ExecutionRequest) -> ExecutionResult:
         """Dispatch to a registered ``Executor``."""
@@ -92,22 +101,7 @@ class AsyncLocalRoleInvoker:
         self._bindings[role_id] = role
 
     def validate(self, graph: PhaseGraph) -> None:
-        """Raise ``ConfigurationError`` if any phase lacks a valid binding."""
-        for phase_id in graph.phase_ids:
-            phase = graph.get(phase_id)
-            role = self._bindings.get(phase.role_id)
-            if role is None:
-                raise ConfigurationError(
-                    f"Phase {phase.phase_id!r} references unregistered role_id {phase.role_id!r}"
-                )
-            if phase.kind == "executor" and not isinstance(role, AsyncExecutor):
-                raise ConfigurationError(
-                    f"role_id {phase.role_id!r} is bound to a non-executor implementation"
-                )
-            if phase.kind == "review" and not isinstance(role, AsyncReviewer):
-                raise ConfigurationError(
-                    f"role_id {phase.role_id!r} is bound to a non-reviewer implementation"
-                )
+        _validate_bindings(self._bindings, graph, AsyncExecutor, AsyncReviewer)
 
     async def invoke_executor(self, req: ExecutionRequest) -> ExecutionResult:
         """Dispatch to a registered ``AsyncExecutor``."""

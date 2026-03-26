@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from pawc_kit._fs_atomic import atomic_write
 from pawc_kit.config import load_root_config
 from pawc_kit.contracts.artifacts import HandoffArtifact, HandoffContext
 from pawc_kit.contracts.config import RootConfig
@@ -382,8 +383,7 @@ def save_context_metadata(pack_path: str | Path, metadata: ContextMetadata) -> N
     """Serialize *metadata* to ``context.json`` in *pack_path*."""
     pack_path = Path(pack_path)
     dest = pack_path / "context.json"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
+    atomic_write(dest, metadata.model_dump_json(indent=2))
 
 
 def create_pack_skeleton(
@@ -403,15 +403,11 @@ def create_pack_skeleton(
     save_context_metadata(root, metadata)
 
     for rel_path, content in request_files.items():
-        dest = root / "request" / rel_path
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(content, encoding="utf-8")
+        atomic_write(root / "request" / rel_path, content)
 
     for rel_path, content in config_snapshot.items():
-        dest = root / rel_path
-        dest.parent.mkdir(parents=True, exist_ok=True)
         text = content if isinstance(content, str) else content.decode("utf-8")
-        dest.write_text(text, encoding="utf-8")
+        atomic_write(root / rel_path, text)
 
     for subdir in ("discovery", "decisions", "handoffs"):
         (root / subdir).mkdir(parents=True, exist_ok=True)

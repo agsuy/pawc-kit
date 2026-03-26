@@ -6,13 +6,30 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from pawc_kit.contracts.state import ArtifactRef
 
-class KeyArtifactRef(BaseModel):
-    """Key artifact in handoff: type, ref, description."""
+
+class FileArtifact(BaseModel):
+    """Artifact with full file content, produced by executor LLM output.
+
+    The engine writes ``content`` to disk via ``write_discovery_file``, then
+    calls ``to_artifact_ref()`` to obtain a lean ``ArtifactRef`` (no content)
+    for state persistence.  Only used in discovery workflows; execution
+    workflows receive an empty ``files`` list.
+    """
 
     type: str
     ref: str
     description: str
+    content: str
+
+    def to_artifact_ref(self) -> ArtifactRef:
+        """Strip content for lean state storage."""
+        return ArtifactRef(type=self.type, ref=self.ref, description=self.description)
+
+
+class KeyArtifactRef(ArtifactRef):
+    """Key artifact in handoff context (same schema as ArtifactRef)."""
 
 
 class HandoffContext(BaseModel):
@@ -87,6 +104,7 @@ class DecisionPayload(BaseModel):
 
 __all__ = [
     "DecisionPayload",
+    "FileArtifact",
     "FindingEntry",
     "HandoffArtifact",
     "HandoffArtifactMetadata",

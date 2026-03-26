@@ -226,7 +226,7 @@ def test_context_section_windowing_shows_only_recent() -> None:
         history=WorkflowHistoryView(iterations=iterations, reviews=[]),
         context=ContextPayload.empty(),
     )
-    eff = EfficiencyConfig(prompt_verbosity="full", context_window=2, phase_filter=False)
+    eff = EfficiencyConfig(prompt_verbosity="full", max_history_entries=2, phase_filter=False)
     section = context_section(ctx, eff)
     assert "Prior:" in section  # windowed summary
     assert "iter-5" in section  # last window entry
@@ -255,6 +255,20 @@ def test_role_section_with_full_config() -> None:
 
 def test_role_section_none_returns_empty() -> None:
     assert role_section(None) == ""
+
+
+def test_role_section_finding_categories_from_model_extra() -> None:
+    cfg = RoleConfig.model_validate(
+        {
+            "name": "Reviewer",
+            "version": "1.0.0",
+            "finding_categories": ["security", "ux"],
+        }
+    )
+    section = role_section(cfg)
+    assert "Allowed finding categories:" in section
+    assert "- security" in section
+    assert "- ux" in section
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +358,22 @@ def test_reviewer_prompts_no_quality_gates_no_mention() -> None:
     ctx = make_review_ctx()
     system, _ = DefaultPromptAssembler().reviewer_prompts(ctx)
     assert "Quality Gates" not in system
+
+
+def test_reviewer_prompts_finding_categories_in_system() -> None:
+    ctx = make_review_ctx()
+    cats = ["correctness", "security"]
+    system, _ = DefaultPromptAssembler().reviewer_prompts(ctx, finding_categories=cats)
+    assert "Finding categories" in system
+    assert "correctness" in system and "security" in system
+
+
+def test_reviewer_prompts_no_finding_categories_unchanged() -> None:
+    ctx = make_review_ctx()
+    system_none, _ = DefaultPromptAssembler().reviewer_prompts(ctx, finding_categories=None)
+    system_omit, _ = DefaultPromptAssembler().reviewer_prompts(ctx)
+    assert "Finding categories" not in system_none
+    assert system_none == system_omit
 
 
 def test_reviewer_prompts_request_change_targets_in_user() -> None:

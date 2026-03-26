@@ -1,0 +1,121 @@
+# ============================================================================
+# pawc-kit  templates/discovery/discovery-full.yaml  --  Seven-phase discovery with all features
+# ============================================================================
+#
+# This file is DiscoveryConfig (discovery graph + discovery settings), not native
+# RootConfig / config.yaml.  For execution skill config see docs/workflow-config-reference.md
+# and templates/workflow/config-reference.yaml.
+#
+# All 7 phases: research -> synthesis -> ai_review -> user_review (human) ->
+#               questions -> plan -> finalize
+#
+# Demonstrates every DiscoveryConfig and DiscoveryPhaseConfig field:
+#   - adhoc_questions, require_human_approval
+#   - confidence_floor, confidence_threshold, max_iterations
+#   - finding_categories, require_context_summary_doc
+#   - Per-phase: max_rounds, max_questions, human, routing, role_overrides
+#   - Multi-target on_approve / on_complete
+#
+# Load with:
+#   from pawc_kit.contracts import DiscoveryConfig
+#   cfg = DiscoveryConfig.model_validate(yaml.safe_load(open("templates/discovery/discovery-full.yaml")))
+#   graph = PhaseGraph.from_discovery_config(cfg)
+# ============================================================================
+
+
+# ---------------------------------------------------------------------------
+# Engine-level settings (forwarded to AsyncWorkflowEngine constructor)
+# ---------------------------------------------------------------------------
+confidence_threshold: 85
+max_iterations: 5
+# Same semantics as workflow.confidence_floor on RootConfig: low scores finalize failed (no exception).
+confidence_floor: 25
+
+
+# ---------------------------------------------------------------------------
+# Discovery-level settings
+# ---------------------------------------------------------------------------
+adhoc_questions: true
+require_human_approval: true
+
+# Whitelist of allowed finding categories for reviewers.
+# Not currently enforced at runtime -- stored and snapshotted for spec compliance.
+finding_categories:
+  - architecture
+  - security
+  - performance
+  - maintainability
+  - testing
+  - documentation
+
+# Require discovery/context-summary.md to exist at finalize.
+# Not currently enforced at runtime -- stored for spec compliance.
+require_context_summary_doc: true
+
+# FS layout hints (ignored when running under pawc-server with SQLite backend)
+# run_directory: sessions/discovery
+# state_filename: state.json
+
+
+# ---------------------------------------------------------------------------
+# Phase graph
+# ---------------------------------------------------------------------------
+phases:
+  # Phase 1: research -- initial investigation
+  - phase: research
+    on_complete: synthesis
+    # max_rounds maps to max_feedback_rounds on the engine, which caps REQUEST_CHANGES
+    # feedback loops on *review* phases only. On an executor phase like this one it
+    # is stored but has no runtime effect.
+    max_rounds: 3
+
+  # Phase 2: synthesis -- consolidate research findings
+  - phase: synthesis
+    on_complete: ai_review
+    role_overrides:
+      temperature: 0.3
+      focus: consolidation
+
+  # Phase 3: ai_review -- automated quality check (review phase: use on_approve, not on_complete)
+  - phase: ai_review
+    on_approve:
+      - user_review
+      - plan
+    can_request_changes_from:
+      - research
+      - synthesis
+    max_rounds: 2
+    routing:
+      - target: user_review
+        confidence_lt: 80
+      - target: plan
+        confidence_gte: 80
+
+  # Phase 4: user_review -- human approval gate
+  - phase: user_review
+    on_approve:
+      - questions
+      - plan
+    can_request_changes_from:
+      - synthesis
+    human: true
+    routing:
+      - target: questions
+        confidence_lt: 90
+      - target: plan
+        confidence_gte: 90
+
+  # Phase 5: questions -- clarifying questions to the user
+  - phase: questions
+    on_complete: plan
+    max_questions: 5
+
+  # Phase 6: plan -- generate the implementation plan
+  - phase: plan
+    on_complete: finalize
+    role_overrides:
+      output_format: structured
+
+  # Phase 7: finalize -- produce final deliverables
+  - phase: finalize
+    on_complete: []

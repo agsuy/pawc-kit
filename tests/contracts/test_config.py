@@ -80,7 +80,7 @@ def test_efficiency_config_defaults() -> None:
     cfg = EfficiencyConfig()
     assert cfg.prompt_verbosity == "compact"
     assert cfg.schema_format == "abbreviated"
-    assert cfg.context_window is None
+    assert cfg.max_history_entries is None
     assert cfg.phase_filter is True
     assert cfg.output_budget is True
 
@@ -118,9 +118,9 @@ def test_efficiency_config_all_combinations(verbosity: str, schema_format: str) 
     assert cfg.schema_format == schema_format
 
 
-def test_efficiency_config_context_window_set() -> None:
-    cfg = EfficiencyConfig(context_window=8192)
-    assert cfg.context_window == 8192
+def test_efficiency_config_max_history_entries_set() -> None:
+    cfg = EfficiencyConfig(max_history_entries=12)
+    assert cfg.max_history_entries == 12
 
 
 # ---------------------------------------------------------------------------

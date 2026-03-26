@@ -1,0 +1,194 @@
+# ============================================================================
+# pawc-kit  templates/workflow/config-reference.yaml  --  Full RootConfig field reference
+# ============================================================================
+#
+# This file documents EVERY field accepted by pawc_kit.contracts.config.RootConfig.
+# Required fields have real values; optional fields are commented out with their
+# type, default, and constraints.
+#
+# Long-form reference (field tables, examples, audit notes):
+#   docs/workflow-config-reference.md
+#
+# Load with:
+#   from pawc_kit import WorkflowSession
+#   session = WorkflowSession.from_config("config.yaml")
+#
+# Or manually:
+#   from pawc_kit.contracts import RootConfig
+#   from pawc_kit.config import load_root_config
+#   cfg = load_root_config("config.yaml")
+#
+# NOTE: This is the pawc-kit NATIVE RootConfig layout.  Other distributions
+# may wrap or split workflow config under different top-level keys; consult
+# that package’s docs for its template format.
+# ============================================================================
+
+
+# ---------------------------------------------------------------------------
+# skill  (SkillConfig -- required)
+# ---------------------------------------------------------------------------
+skill:
+  name: my-skill                    # str, required
+  version: "1.0.0"                  # str, required, must be valid semver
+  # description: "What this skill does"  # str, default ""
+
+
+# ---------------------------------------------------------------------------
+# state_directory  (optional in RootConfig schema, str | None, default None)
+# ---------------------------------------------------------------------------
+# WorkflowSession.from_config / AsyncWorkflowSession.from_config call
+# load_root_config(..., require_state_directory=True), so this is REQUIRED
+# for normal session loading.  (load_root_config(..., require_state_directory=False)
+# is only for narrow tooling use cases.)
+state_directory: ./runs
+
+
+# ---------------------------------------------------------------------------
+# context  (ContextConfig -- optional, all fields have defaults)
+# ---------------------------------------------------------------------------
+# context:
+#   max_composition_size: 5         # int, default 5, range [1, 30]
+                                    # Max context packs to compose together
+
+
+# ---------------------------------------------------------------------------
+# efficiency  (EfficiencyConfig -- optional, all fields have defaults)
+# ---------------------------------------------------------------------------
+# LLM prompt assembly knobs (pass cfg.efficiency as efficiency= on roles).
+# max_history_entries caps expanded rows in prompts — not a token budget; see docs/workflow-config-reference.md.
+#
+# efficiency:
+#   prompt_verbosity: compact       # "full" | "json" | "jsonl" | "compact"
+                                    #   default "compact"
+#   schema_format: abbreviated      # "full" | "abbreviated" | "none"
+                                    #   default "abbreviated"
+#   max_history_entries: null      # int | null, default null
+                                    #   Max full iteration rows and (separately) review rows
+                                    #   in context_section(); older rows summarized
+#   phase_filter: true              # bool, default true
+                                    #   Filter context to current phase only
+#   output_budget: true             # bool, default true
+                                    #   Include output budget hint in prompt
+
+
+# ---------------------------------------------------------------------------
+# context_injection  (ContextInjectionConfig -- optional, all fields have defaults)
+# ---------------------------------------------------------------------------
+# Controls how context pack data is injected into LLM prompts.
+# Pass cfg.context_injection to role constructors as injection=.
+#
+# context_injection:
+#   include_request_files: true     # bool, default true
+#   include_discovery: true         # bool, default true
+#   include_children: true          # bool, default true
+#   max_file_chars: null            # int | null, default null
+                                    #   Truncate individual files to this length
+#   file_allowlist: null            # list[str] | null, default null
+                                    #   fnmatch patterns; if set, filename must match one
+#   file_blocklist: null            # list[str] | null, default null
+                                    #   fnmatch patterns; excluded first
+#   discovery_sections:             # list[str], default ["summary", "key_artifacts"]
+#     - summary
+#     - key_artifacts
+#
+#   compression:                    # CompressionConfig, all fields have defaults
+#     mode: simple                  # "simple" | "semantic" | "none", default "simple"
+#     chunk_size: 2000              # int, default 2000, minimum 100
+#     policies:                     # dict[str, ChunkPolicyConfig], default {}
+                                    # Keys must match semantic ChunkType values:
+                                    #   heading, paragraph, list, code, table, diagram
+                                    #   (mode=semantic only; unknown keys logged and ignored)
+#       paragraph:                  # ChunkPolicyConfig
+#         action: truncate          # "keep" | "truncate" | "collapse" | "strip"
+                                    #   default "keep"
+#         max_sentences: 5          # int | null, default null
+#         max_items: null           # int | null, default null
+#         max_lines: null           # int | null, default null
+#         max_rows: null            # int | null, default null
+#       code:
+#         action: collapse
+#         max_lines: 20
+
+
+# ---------------------------------------------------------------------------
+# observability  (ObservabilityConfig -- optional, all fields have defaults)
+# ---------------------------------------------------------------------------
+# Controls which built-in observer the session auto-constructs.
+# WorkflowSession and AsyncWorkflowSession: explicit observer= wins; observer=None
+# suppresses the auto-built observer even if config requests logging/otel.
+#
+# observability:
+#   observer: none                  # "otel" | "logging" | "none", default "none"
+                                    #   "otel" requires pawc-kit[otel]
+#   meter_name: pawc_kit.workflow   # str, default "pawc_kit.workflow"
+#   tracer_name: pawc_kit.workflow  # str, default "pawc_kit.workflow"
+#   logger_name: pawc_kit.workflow  # str, default "pawc_kit.workflow"
+
+
+# ---------------------------------------------------------------------------
+# workflow  (WorkflowConfig -- optional, all fields have defaults)
+# ---------------------------------------------------------------------------
+# Engine policy, layout paths, and the phase graph.
+#
+# An empty phases list is valid at config level; the error for "no graph"
+# is raised at session-init time when no graph= override is provided.
+
+workflow:
+  # Engine policy ----------------------------------------------------------
+
+  confidence_threshold: 85          # int, default 85, range [0, 100]
+  max_iterations: 10                # int, default 10, minimum 1
+  max_feedback_rounds: 3            # int, default 3, minimum 0
+  # confidence_floor: null          # int | null, default null
+                                    #   If set: executor scores below this finalize
+                                    #   the run as failed (no Python exception).
+                                    #   Model does not validate 0–100; keep in range in YAML.
+
+  # Layout paths -----------------------------------------------------------
+
+  # run_directory: sessions/execution   # str, default "sessions/execution"
+  # state_filename: state.json          # str, default "state.json"
+
+  # Phase graph ------------------------------------------------------------
+
+  phases:
+    # Phase 1: executor
+    - phase_id: work
+      role_id: worker-role          # str, required -- binds register_role(role_id, ...) / invoker
+      kind: executor                # "executor" | "review", required
+
+      on_complete:                  # list[str], default []
+        - review                    #   Candidate next phase ids; routing + chosen_next pick actual next
+
+      # on_approve: []              # list[str], default [] -- only for review phases
+      # can_request_changes_from: []  # list[str], default []
+
+      # context_sources:            # list[str] | null, default null
+      #   - child-context-id        #   Composite pack: keep only these child context_ids
+                                    #   (metadata.context_id), not workflow phase_ids
+
+      # role_overrides:             # dict[str, Any] | null, default null
+      #   temperature: 0.3          #   On ExecutionRequest.phase; kit LLM roles merge over RoleConfig
+
+      # routing:                    # list[RoutingRuleConfig], default []
+      #   - target: deep-review     # Exactly one of confidence_gte or confidence_lt
+      #     confidence_lt: 70       #   int | null, range [0, 100]
+      #   - target: quick-review
+      #     confidence_gte: 70      #   int | null, range [0, 100]
+
+      # human: false                # bool, default false
+                                    #   Review phases only: PENDING stub + pause until decision
+                                    #   is injected into state; then re-run (sync + async engines)
+
+      # max_feedback_rounds: null   # int | null, default null
+                                    #   Per-phase override of workflow.max_feedback_rounds
+
+    # Phase 2: review
+    - phase_id: review
+      role_id: reviewer-role
+      kind: review
+
+      can_request_changes_from:
+        - work                      # Enables feedback loop back to work phase
+
+      # on_approve: []              # list[str], default [] -- terminal if empty

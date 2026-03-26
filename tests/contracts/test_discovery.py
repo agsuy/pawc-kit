@@ -100,3 +100,94 @@ def test_question_entry_round_trip() -> None:
 def test_question_request_fields() -> None:
     r = QuestionRequest(question_id="q-1", question="Why?")
     assert r.question_id == "q-1"
+
+
+# ---------------------------------------------------------------------------
+# max_feedback_rounds field
+# ---------------------------------------------------------------------------
+
+
+def test_discovery_config_max_feedback_rounds_default() -> None:
+    cfg = DiscoveryConfig(
+        phases=[DiscoveryPhaseConfig(phase="finalize")], require_human_approval=False
+    )
+    assert cfg.max_feedback_rounds == 3
+
+
+def test_discovery_config_max_feedback_rounds_custom() -> None:
+    cfg = DiscoveryConfig(
+        phases=[DiscoveryPhaseConfig(phase="finalize")],
+        require_human_approval=False,
+        max_feedback_rounds=5,
+    )
+    assert cfg.max_feedback_rounds == 5
+
+
+def test_discovery_config_max_feedback_rounds_zero_valid() -> None:
+    cfg = DiscoveryConfig(
+        phases=[DiscoveryPhaseConfig(phase="finalize")],
+        require_human_approval=False,
+        max_feedback_rounds=0,
+    )
+    assert cfg.max_feedback_rounds == 0
+
+
+def test_discovery_config_max_feedback_rounds_negative_invalid() -> None:
+    with pytest.raises(ValidationError):
+        DiscoveryConfig(
+            phases=[DiscoveryPhaseConfig(phase="x")],
+            max_feedback_rounds=-1,
+        )
+
+
+# ---------------------------------------------------------------------------
+# engine_kwargs()
+# ---------------------------------------------------------------------------
+
+
+def test_engine_kwargs_defaults() -> None:
+    cfg = DiscoveryConfig(
+        phases=[DiscoveryPhaseConfig(phase="finalize")], require_human_approval=False
+    )
+    kw = cfg.engine_kwargs()
+    assert kw["confidence_threshold"] == 80
+    assert kw["max_iterations"] == 3
+    assert kw["max_feedback_rounds"] == 3
+    assert kw["adhoc_questions"] is True
+    assert "confidence_floor" not in kw
+
+
+def test_engine_kwargs_with_floor() -> None:
+    cfg = DiscoveryConfig(
+        phases=[DiscoveryPhaseConfig(phase="finalize")],
+        require_human_approval=False,
+        confidence_floor=20,
+    )
+    kw = cfg.engine_kwargs()
+    assert kw["confidence_floor"] == 20
+
+
+def test_engine_kwargs_floor_absent_when_none() -> None:
+    cfg = DiscoveryConfig(
+        phases=[DiscoveryPhaseConfig(phase="finalize")], require_human_approval=False
+    )
+    assert cfg.confidence_floor is None
+    assert "confidence_floor" not in cfg.engine_kwargs()
+
+
+def test_engine_kwargs_custom_values() -> None:
+    cfg = DiscoveryConfig(
+        phases=[DiscoveryPhaseConfig(phase="finalize")],
+        require_human_approval=False,
+        confidence_threshold=70,
+        max_iterations=10,
+        max_feedback_rounds=5,
+        adhoc_questions=False,
+        confidence_floor=15,
+    )
+    kw = cfg.engine_kwargs()
+    assert kw["confidence_threshold"] == 70
+    assert kw["max_iterations"] == 10
+    assert kw["max_feedback_rounds"] == 5
+    assert kw["adhoc_questions"] is False
+    assert kw["confidence_floor"] == 15

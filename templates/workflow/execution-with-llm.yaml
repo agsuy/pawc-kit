@@ -1,0 +1,135 @@
+# ============================================================================
+# pawc-kit  templates/workflow/execution-with-llm.yaml  --  Execution wired for LLM roles
+# ============================================================================
+#
+# Native RootConfig layout — field tables and semantics: docs/workflow-config-reference.md
+#
+# Demonstrates every config knob that affects LLM-backed role behaviour:
+#   - efficiency (prompt verbosity, schema format, budgets)
+#   - context_injection (file filtering, discovery sections, compression)
+#   - observability (observer selection)
+#   - context (composition limits)
+#
+# These config sections are loaded into RootConfig but are NOT automatically
+# forwarded to roles.  The integrator reads them from the session and passes
+# them explicitly:
+#
+#   session = WorkflowSession.from_config("templates/workflow/execution-with-llm.yaml")
+#   role = AsyncLLMExecutorRole(
+#       backend=my_llm,
+#       role_configs=my_roles,
+#       efficiency=session.config.efficiency,
+#       injection=session.config.context_injection,
+#   )
+#
+# NOTE: quality_gates is NOT part of RootConfig -- it is a server-level
+# concern passed to LLMReviewerRole by pawc-server's LLMRoleInvoker.
+# It is documented here for awareness.
+# ============================================================================
+
+skill:
+  name: llm-powered-skill
+  version: "2.1.0"
+  description: Full LLM configuration showcase
+
+state_directory: ./runs
+
+# ---------------------------------------------------------------------------
+# context -- controls context pack composition
+# ---------------------------------------------------------------------------
+context:
+  max_composition_size: 10
+
+# ---------------------------------------------------------------------------
+# efficiency -- token efficiency for LLM prompts
+# ---------------------------------------------------------------------------
+efficiency:
+  prompt_verbosity: compact
+  schema_format: abbreviated
+  max_history_entries: null # e.g. 12 to cap expanded iteration/review rows in prompts
+  phase_filter: true
+  output_budget: true
+
+# ---------------------------------------------------------------------------
+# context_injection -- how context pack data enters LLM prompts
+# ---------------------------------------------------------------------------
+context_injection:
+  include_request_files: true
+  include_discovery: true
+  include_children: false
+  max_file_chars: 50000
+  file_allowlist:
+    - "*.py"
+    - "*.yaml"
+  file_blocklist:
+    - "*.log"
+    - "__pycache__/*"
+  # Built-in keys: summary, key_artifacts, open_questions, assumptions, next_steps
+  # (others are accepted but ignored by discovery_section(); see docs/workflow-config-reference.md)
+  discovery_sections:
+    - summary
+    - key_artifacts
+    - open_questions
+
+  compression:
+    mode: semantic
+    chunk_size: 3000
+    # mode=semantic: policy keys must be ChunkType names (heading, paragraph, list, code, table, diagram)
+    policies:
+      paragraph:
+        action: truncate
+        max_sentences: 10
+      code:
+        action: collapse
+        max_lines: 50
+      table:
+        action: truncate
+        max_rows: 20
+      list:
+        action: truncate
+        max_items: 15
+
+# ---------------------------------------------------------------------------
+# observability -- auto-construct an observer for the session
+# ---------------------------------------------------------------------------
+observability:
+  observer: logging
+  logger_name: my_skill.workflow
+
+# ---------------------------------------------------------------------------
+# workflow -- engine policy and phase graph
+# ---------------------------------------------------------------------------
+workflow:
+  confidence_threshold: 90
+  max_iterations: 8
+  max_feedback_rounds: 2
+
+  phases:
+    - phase_id: draft
+      role_id: drafter-role
+      kind: executor
+      on_complete:
+        - review
+
+    - phase_id: review
+      role_id: reviewer-role
+      kind: review
+      can_request_changes_from:
+        - draft
+      on_approve:
+        - polish
+
+    - phase_id: polish
+      role_id: polisher-role
+      kind: executor
+
+
+# ---------------------------------------------------------------------------
+# quality_gates (NOT part of RootConfig -- server-level concern)
+# ---------------------------------------------------------------------------
+# Documented here for awareness.  In pawc-server, quality_gates is a
+# top-level template key passed to LLMRoleInvoker -> AsyncLLMReviewerRole:
+#
+#   quality_gates:
+#     critical_findings_allowed: 0
+#     high_findings_allowed: 2

@@ -5,13 +5,13 @@ from __future__ import annotations
 import pytest
 
 from pawc_kit.contracts import ConfigurationError, EfficiencyConfig, LLMError, RoleConfig
-from pawc_kit.contracts.artifacts import FindingEntry, HandoffContext
+from pawc_kit.contracts.artifacts import FileArtifact, FindingEntry, HandoffContext, KeyArtifactRef
 from pawc_kit.contracts.config import RoutingRuleConfig
-from pawc_kit.contracts.state import ArtifactRef
 from pawc_kit.llm.backend import BackendCapabilities, TokenUsage
 from pawc_kit.llm.mock import MockBackend
 from pawc_kit.llm.roles import (
     ExecutorOutput,
+    FileContent,
     LLMExecutorRole,
     LLMReviewerRole,
     ReviewerOutput,
@@ -70,13 +70,24 @@ def test_executor_role_with_artifacts() -> None:
         confidence_score=90,
         summary="Done",
         handoff=HandoffContext(summary="handoff"),
-        artifacts=[ArtifactRef(type="report", ref="results/r.md", description="Report")],
+        artifacts=[
+            FileArtifact(
+                type="report",
+                ref="results/r.md",
+                description="Report",
+                content="# Report content\n",
+            )
+        ],
     )
     backend.queue_model(output)
     role = LLMExecutorRole(backend)
     result = role.execute(make_exec_ctx())
+    # artifacts in ExecutionResult are lean ArtifactRef (no content)
     assert len(result.artifacts) == 1
     assert result.artifacts[0].ref == "results/r.md"
+    # files carry the full content for the engine to write to disk
+    assert len(result.files) == 1
+    assert result.files[0].content == "# Report content\n"
 
 
 def test_executor_role_bad_response_raises_llm_error() -> None:
@@ -592,3 +603,247 @@ def test_reviewer_role_no_routing_rules_chosen_next_is_none() -> None:
     role = LLMReviewerRole(backend)
     result = role.review(make_review_ctx())
     assert result.chosen_next is None
+
+
+# ---------------------------------------------------------------------------
+# Artifact backfill
+# ---------------------------------------------------------------------------
+
+
+def _output_with_phantom_refs() -> ExecutorOutput:
+    """ExecutorOutput with empty artifacts but .md refs in handoff.key_artifacts."""
+    return ExecutorOutput(
+        confidence_score=85,
+        summary="Done",
+        handoff=HandoffContext(
+            summary="handoff",
+            key_artifacts=[
+                KeyArtifactRef(
+                    type="file",
+                    ref="discovery/constraints.md",
+                    description="Constraints glossary",
+                ),
+                KeyArtifactRef(
+                    type="file",
+                    ref="discovery/sources.md",
+                    description="Source list",
+                ),
+            ],
+        ),
+        artifacts=[],
+    )
+
+
+def test_backfill_triggers_on_empty_artifacts() -> None:
+    """When artifacts is empty and key_artifacts has .md refs, backfill calls are made."""
+    backend = MockBackend()
+    backend.queue_model(_output_with_phantom_refs())
+    backend.queue_model(FileContent(content="# Constraints\n\nsome content"))
+    backend.queue_model(FileContent(content="# Sources\n\n- source1"))
+
+    role = LLMExecutorRole(backend, artifact_backfill_retries=1)
+    result = role.execute(make_exec_ctx())
+
+    assert len(result.files) == 2
+    assert result.files[0].ref == "discovery/constraints.md"
+    assert "# Constraints" in result.files[0].content
+    assert result.files[1].ref == "discovery/sources.md"
+    assert len(result.artifacts) == 2
+    assert backend.call_count == 3  # 1 main + 2 backfill
+
+
+def test_backfill_skips_when_artifacts_already_populated() -> None:
+    """No backfill calls when artifacts is already populated."""
+    backend = MockBackend()
+    output = ExecutorOutput(
+        confidence_score=85,
+        summary="Done",
+        handoff=HandoffContext(
+            summary="handoff",
+            key_artifacts=[
+                KeyArtifactRef(type="file", ref="discovery/report.md", description="Report"),
+            ],
+        ),
+        artifacts=[
+            FileArtifact(
+                type="file",
+                ref="discovery/report.md",
+                description="Report",
+                content="# Report\n",
+            )
+        ],
+    )
+    backend.queue_model(output)
+
+    role = LLMExecutorRole(backend, artifact_backfill_retries=1)
+    result = role.execute(make_exec_ctx())
+
+    assert backend.call_count == 1  # no backfill calls
+    assert len(result.files) == 1
+
+
+def test_backfill_disabled_when_retries_zero(caplog: pytest.LogCaptureFixture) -> None:
+    """artifact_backfill_retries=0: no LLM calls, but a warning is logged."""
+    import logging
+
+    backend = MockBackend()
+    backend.queue_model(_output_with_phantom_refs())
+
+    role = LLMExecutorRole(backend, artifact_backfill_retries=0)
+    with caplog.at_level(logging.WARNING, logger="pawc_kit.llm.roles"):
+        result = role.execute(make_exec_ctx())
+
+    assert backend.call_count == 1  # only the main call
+    assert len(result.files) == 0
+    assert any("Backfill disabled" in r.message for r in caplog.records)
+
+
+def test_backfill_accumulates_token_usage() -> None:
+    """Token usage from backfill calls is merged into the role's last_usage."""
+    backend = MockBackend()
+    main_usage = TokenUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150)
+    backfill_usage = TokenUsage(prompt_tokens=20, completion_tokens=30, total_tokens=50)
+
+    backend.queue_model(_output_with_phantom_refs(), usage=main_usage)
+    backend.queue_model(FileContent(content="# Constraints\n"), usage=backfill_usage)
+    backend.queue_model(FileContent(content="# Sources\n"), usage=backfill_usage)
+
+    role = LLMExecutorRole(backend, artifact_backfill_retries=1)
+    result = role.execute(make_exec_ctx())
+
+    assert result.usage is not None
+    assert result.usage.prompt_tokens == 100 + 20 + 20
+    assert result.usage.completion_tokens == 50 + 30 + 30
+    assert result.usage.total_tokens == 150 + 50 + 50
+
+
+def test_backfill_skips_non_markdown_refs() -> None:
+    """Refs that don't end in .md are not backfilled."""
+    backend = MockBackend()
+    output = ExecutorOutput(
+        confidence_score=85,
+        summary="Done",
+        handoff=HandoffContext(
+            summary="handoff",
+            key_artifacts=[
+                KeyArtifactRef(type="file", ref="discovery/data.json", description="JSON data"),
+                KeyArtifactRef(type="file", ref="discovery/report.md", description="Report"),
+            ],
+        ),
+        artifacts=[],
+    )
+    backend.queue_model(output)
+    backend.queue_model(FileContent(content="# Report\n"))
+
+    role = LLMExecutorRole(backend, artifact_backfill_retries=1)
+    result = role.execute(make_exec_ctx())
+
+    assert backend.call_count == 2  # 1 main + 1 backfill (only for .md)
+    assert len(result.files) == 1
+    assert result.files[0].ref == "discovery/report.md"
+
+
+def test_backfill_skips_empty_content(caplog: pytest.LogCaptureFixture) -> None:
+    """Empty content from backfill is skipped with a warning."""
+    import logging
+
+    backend = MockBackend()
+    backend.queue_model(_output_with_phantom_refs())
+    backend.queue_model(FileContent(content=""))  # empty
+    backend.queue_model(FileContent(content="# Sources\n"))
+
+    role = LLMExecutorRole(backend, artifact_backfill_retries=1)
+    with caplog.at_level(logging.WARNING, logger="pawc_kit.llm.roles"):
+        result = role.execute(make_exec_ctx())
+
+    assert len(result.files) == 1
+    assert result.files[0].ref == "discovery/sources.md"
+    assert any("empty content" in r.message for r in caplog.records)
+
+
+def test_backfill_skips_json_content(caplog: pytest.LogCaptureFixture) -> None:
+    """Content that looks like JSON is skipped with a warning."""
+    import logging
+
+    backend = MockBackend()
+    backend.queue_model(_output_with_phantom_refs())
+    backend.queue_model(FileContent(content='{"key": "value"}'))  # JSON-like
+    backend.queue_model(FileContent(content="# Sources\n"))
+
+    role = LLMExecutorRole(backend, artifact_backfill_retries=1)
+    with caplog.at_level(logging.WARNING, logger="pawc_kit.llm.roles"):
+        result = role.execute(make_exec_ctx())
+
+    assert len(result.files) == 1
+    assert result.files[0].ref == "discovery/sources.md"
+    assert any("JSON" in r.message for r in caplog.records)
+
+
+def test_backfill_tolerates_llm_error_for_one_file(caplog: pytest.LogCaptureFixture) -> None:
+    """LLMError on one backfill call is skipped; others still succeed."""
+    import logging
+
+    backend = MockBackend()
+    backend.queue_model(_output_with_phantom_refs())
+    backend.queue("not valid json at all")  # will fail, no retries (retries=0 for backfill)
+    backend.queue_model(FileContent(content="# Sources\n"))
+
+    # retries=0 means no backfill at all -- use retries=1 to test LLMError path
+    backend2 = MockBackend()
+    backend2.queue_model(_output_with_phantom_refs())
+    # queue a bad response that will exhaust retries
+    for _ in range(2):  # 1 attempt + 1 retry
+        backend2.queue("not valid json")
+    backend2.queue_model(FileContent(content="# Sources\n"))
+
+    role2 = LLMExecutorRole(backend2, artifact_backfill_retries=1)
+    with caplog.at_level(logging.WARNING, logger="pawc_kit.llm.roles"):
+        result = role2.execute(make_exec_ctx())
+
+    assert len(result.files) == 1
+    assert result.files[0].ref == "discovery/sources.md"
+
+
+# ---------------------------------------------------------------------------
+# max_tokens: StructuredOutput global default reaches backend.complete
+# (regression guard for the synthesis/research truncation bug)
+# ---------------------------------------------------------------------------
+
+
+class _CapturingBackend:
+    """Synchronous backend that records the max_tokens value received on each call."""
+
+    def __init__(self, response_text: str) -> None:
+        self._response_text = response_text
+        self.recorded_max_tokens: list[int | None] = []
+
+    def complete(
+        self, system: str, user: str, *, response_schema=None, max_tokens: int | None = None
+    ):
+        self.recorded_max_tokens.append(max_tokens)
+        return type("CR", (), {"text": self._response_text, "usage": None})()
+
+    def capabilities(self) -> BackendCapabilities:
+        return BackendCapabilities()
+
+
+def test_executor_passes_no_max_tokens_to_backend() -> None:
+    """Executor does not pass a max_tokens cap — the model generates freely.
+
+    StructuredOutput.call no longer forwards a max_tokens argument so the backend
+    receives None, letting the sidecar/model use its own maximum output window.
+    """
+    backend = _CapturingBackend(_executor_output().model_dump_json())
+    role = LLMExecutorRole(backend)  # type: ignore[arg-type]
+    role.execute(make_exec_ctx())
+
+    assert backend.recorded_max_tokens == [None]
+
+
+def test_reviewer_passes_no_max_tokens_to_backend() -> None:
+    """Reviewer also omits max_tokens — same no-cap behaviour as the executor."""
+    backend = _CapturingBackend(_reviewer_output().model_dump_json())
+    role = LLMReviewerRole(backend)  # type: ignore[arg-type]
+    role.review(make_review_ctx())
+
+    assert backend.recorded_max_tokens == [None]

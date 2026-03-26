@@ -22,16 +22,10 @@ def validate_semver(version: str) -> bool:
     return True
 
 
-def _ensure_semver_str(v: str) -> str:
-    try:
-        semver.Version.parse(v)
-    except (ValueError, TypeError) as exc:
-        raise ValueError(_SEMVER_ERROR) from exc
-    return v
-
-
-def _ensure_optional_semver_str(v: str | None) -> str | None:
+def _ensure_semver(v: str | None, *, required: bool) -> str | None:
     if v is None:
+        if required:
+            raise ValueError(_SEMVER_ERROR)
         return None
     try:
         semver.Version.parse(v)
@@ -40,8 +34,10 @@ def _ensure_optional_semver_str(v: str | None) -> str | None:
     return v
 
 
-SemVerStr = Annotated[str, AfterValidator(_ensure_semver_str)]
-OptionalSemVerStr = Annotated[str | None, AfterValidator(_ensure_optional_semver_str)]
+SemVerStr = Annotated[str, AfterValidator(lambda v: _ensure_semver(v, required=True))]
+OptionalSemVerStr = Annotated[
+    str | None, AfterValidator(lambda v: _ensure_semver(v, required=False))
+]
 
 
 def validate_no_version_in_id(value: str, field_name: str) -> str:
@@ -55,3 +51,15 @@ def validate_no_version_in_id(value: str, field_name: str) -> str:
             f"use the dedicated version field instead (got {value!r})"
         )
     return value
+
+
+def _check_no_version_optional(v: str | None) -> str | None:
+    if v is not None:
+        validate_no_version_in_id(v, "id field")
+    return v
+
+
+NoVersionId = Annotated[str | None, AfterValidator(_check_no_version_optional)]
+RequiredNoVersionId = Annotated[
+    str, AfterValidator(lambda v: validate_no_version_in_id(v, "id field"))
+]

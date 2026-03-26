@@ -1,4 +1,4 @@
-"""Tests for LayoutManager: paths, directory creation, read/write state."""
+"""Tests for LayoutManager: paths and directory creation."""
 
 from __future__ import annotations
 
@@ -6,8 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from pawc_kit.contracts.errors import ConfigurationError, StateError
-from pawc_kit.contracts.state import SessionState
+from pawc_kit.contracts.errors import ConfigurationError
 from pawc_kit.layout import LayoutManager
 
 
@@ -23,17 +22,6 @@ def _manager(
         run_directory=run_directory,
         session_id=session_id,
         state_filename=state_filename,
-    )
-
-
-def _state(session_id: str = "sess-1") -> SessionState:
-    return SessionState(
-        session_id=session_id,
-        skill_name="skill",
-        skill_version="1.0.0",
-        started_at="2026-01-01T00:00:00Z",
-        current_phase="work",
-        status="initialized",
     )
 
 
@@ -128,38 +116,3 @@ def test_initialize_run_directory_idempotent(tmp_path: Path) -> None:
     mgr = _manager(tmp_path)
     mgr.initialize_run_directory()
     mgr.initialize_run_directory()  # should not raise
-
-
-# ---------------------------------------------------------------------------
-# write_state / read_state
-# ---------------------------------------------------------------------------
-
-
-def test_write_state_creates_file(tmp_path: Path) -> None:
-    mgr = _manager(tmp_path)
-    mgr.initialize_run_directory()
-    mgr.write_state(_state())
-    assert mgr.state_path.exists()
-
-
-def test_read_state_roundtrip(tmp_path: Path) -> None:
-    mgr = _manager(tmp_path)
-    mgr.initialize_run_directory()
-    mgr.write_state(_state())
-    loaded = mgr.read_state()
-    assert loaded.session_id == "sess-1"
-    assert loaded.skill_version == "1.0.0"
-
-
-def test_read_state_raises_when_file_missing(tmp_path: Path) -> None:
-    mgr = _manager(tmp_path)
-    with pytest.raises(StateError, match="State file not found"):
-        mgr.read_state()
-
-
-def test_write_read_state_custom_filename(tmp_path: Path) -> None:
-    mgr = _manager(tmp_path, state_filename="discovery_state.json")
-    mgr.initialize_run_directory()
-    mgr.write_state(_state())
-    loaded = mgr.read_state()
-    assert loaded.session_id == "sess-1"

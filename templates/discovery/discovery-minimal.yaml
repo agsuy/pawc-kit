@@ -1,0 +1,44 @@
+# ============================================================================
+# pawc-kit  templates/discovery/discovery-minimal.yaml  --  Simplest discovery workflow
+# ============================================================================
+#
+# DiscoveryConfig, not RootConfig — see docs/workflow-config-reference.md for native skill config.
+#
+# Three phases: research -> ai_review -> finalize.
+# Uses the DiscoveryConfig structure consumed by PhaseGraph.from_discovery_config().
+#
+# Discovery workflows are NOT loaded via WorkflowSession.  Instead:
+#
+#   from pawc_kit.contracts import DiscoveryConfig
+#   from pawc_kit.workflow import PhaseGraph, AsyncWorkflowEngine
+#   import yaml
+#
+#   with open("templates/discovery/discovery-minimal.yaml") as f:
+#       cfg = DiscoveryConfig.model_validate(yaml.safe_load(f))
+#
+#   graph = PhaseGraph.from_discovery_config(cfg)
+#   engine = AsyncWorkflowEngine(
+#       graph=graph,
+#       invoker=my_invoker,
+#       confidence_threshold=cfg.confidence_threshold,
+#       max_iterations=cfg.max_iterations,
+#   )
+# ============================================================================
+
+phases:
+  - phase: research
+    on_complete: ai_review
+
+  - phase: ai_review
+    on_approve: finalize
+    can_request_changes_from: research
+    max_rounds: 2
+
+  - phase: finalize
+    on_complete: []
+
+adhoc_questions: true
+require_human_approval: false
+
+confidence_threshold: 80
+max_iterations: 3

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, model_validator
 
-from pawc_kit._versioning import SemVerStr, validate_no_version_in_id
+from pawc_kit._versioning import NoVersionId, OptionalSemVerStr, SemVerStr
+
+_SessionStatus = Literal["initialized", "in_progress", "completed", "abandoned", "failed"]
 
 
 class ArtifactRef(BaseModel):
@@ -36,25 +38,11 @@ class IterationEntry(BaseModel):
     summary: str
     started_at: str | None = None
     artifacts: list[ArtifactRef] | None = None
-    agent_id: str | None = None
-    agent_version: str | None = None
-    model_id: str | None = None
-    model_version: str | None = None
+    agent_id: NoVersionId = None
+    agent_version: OptionalSemVerStr = None
+    model_id: NoVersionId = None
+    model_version: OptionalSemVerStr = None
     handoff_context_ref: str | None = None
-
-    @field_validator("agent_id")
-    @classmethod
-    def _check_agent_id(cls, value: str | None) -> str | None:
-        if value is not None:
-            validate_no_version_in_id(value, "agent_id")
-        return value
-
-    @field_validator("model_id")
-    @classmethod
-    def _check_model_id(cls, value: str | None) -> str | None:
-        if value is not None:
-            validate_no_version_in_id(value, "model_id")
-        return value
 
 
 class ReviewEntry(BaseModel):
@@ -69,25 +57,11 @@ class ReviewEntry(BaseModel):
     ended_at: str | None = None
     summary: str | None = None
     findings_ref: str | None = None
-    agent_id: str | None = None
-    agent_version: str | None = None
-    model_id: str | None = None
-    model_version: str | None = None
+    agent_id: NoVersionId = None
+    agent_version: OptionalSemVerStr = None
+    model_id: NoVersionId = None
+    model_version: OptionalSemVerStr = None
     counts_verified: bool | None = None
-
-    @field_validator("agent_id")
-    @classmethod
-    def _check_agent_id(cls, value: str | None) -> str | None:
-        if value is not None:
-            validate_no_version_in_id(value, "agent_id")
-        return value
-
-    @field_validator("model_id")
-    @classmethod
-    def _check_model_id(cls, value: str | None) -> str | None:
-        if value is not None:
-            validate_no_version_in_id(value, "model_id")
-        return value
 
 
 class SessionState(BaseModel):
@@ -103,7 +77,7 @@ class SessionState(BaseModel):
     reviews: list[ReviewEntry] = Field(default_factory=list)
     feedback_loops: int = Field(0, ge=0)
     data_commands: list[DataCommandEntry] | None = None
-    status: Literal["initialized", "in_progress", "completed", "abandoned"] = "initialized"
+    status: _SessionStatus = "initialized"
     completed_at: str | None = None
     metrics: dict | None = None
     run_metadata: dict[str, Any] | None = None
@@ -113,7 +87,7 @@ class SessionState(BaseModel):
         if self.status in ("initialized", "in_progress"):
             if self.completed_at is not None:
                 raise ValueError(f"completed_at must be null when status is {self.status!r}")
-        elif self.status in ("completed", "abandoned") and self.completed_at is None:
+        elif self.status in ("completed", "abandoned", "failed") and self.completed_at is None:
             raise ValueError(f"completed_at must be set when status is {self.status!r}")
         return self
 

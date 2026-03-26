@@ -1,0 +1,59 @@
+# ============================================================================
+# pawc-kit  templates/discovery/discovery-no-human.yaml  --  Fully automated discovery
+# ============================================================================
+#
+# DiscoveryConfig, not RootConfig — see docs/workflow-config-reference.md for native skill config.
+#
+# Four phases: research -> synthesis -> ai_review -> finalize
+# No human gate -- the AI review is the final quality check before finalize.
+#
+# This pattern is useful for batch processing, CI pipelines, or any context
+# where human-in-the-loop is not practical.
+#
+# Load with:
+#   from pawc_kit.contracts import DiscoveryConfig
+#   cfg = DiscoveryConfig.model_validate(yaml.safe_load(open("templates/discovery/discovery-no-human.yaml")))
+#   graph = PhaseGraph.from_discovery_config(cfg)
+# ============================================================================
+
+
+# ---------------------------------------------------------------------------
+# Engine-level settings
+# ---------------------------------------------------------------------------
+confidence_threshold: 75
+max_iterations: 3
+
+
+# ---------------------------------------------------------------------------
+# Discovery-level settings
+# ---------------------------------------------------------------------------
+adhoc_questions: false
+require_human_approval: false
+
+# Not enforced at runtime -- stored for spec compliance; pawc-server warns if
+# the artifact is missing after a successful run, but does not fail the workflow.
+require_context_summary_doc: false
+
+
+# ---------------------------------------------------------------------------
+# Phase graph
+# ---------------------------------------------------------------------------
+phases:
+  - phase: research
+    on_complete: synthesis
+    # max_rounds caps REQUEST_CHANGES feedback loops on review phases only.
+    # Has no runtime effect on executor phases like this one.
+    max_rounds: 2
+
+  - phase: synthesis
+    on_complete: ai_review
+
+  - phase: ai_review
+    on_approve: finalize
+    can_request_changes_from:
+      - research
+      - synthesis
+    max_rounds: 1
+
+  - phase: finalize
+    on_complete: []

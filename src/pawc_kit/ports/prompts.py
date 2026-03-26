@@ -46,6 +46,7 @@ class PromptAssembler(Protocol):
         role_config: RoleConfig | None = None,
         *,
         quality_gates: dict | None = None,
+        finding_categories: list[str] | None = None,
         efficiency: EfficiencyConfig | None = None,
         injection: ContextInjectionConfig | None = None,
         compressor: ContextCompressor | None = None,

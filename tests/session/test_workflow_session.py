@@ -7,34 +7,10 @@ from pathlib import Path
 import pytest
 
 from conftest import make_simple_graph
-from pawc_kit.contracts import ConfigurationError, RootConfig, SkillConfig
-from pawc_kit.contracts.config import PhaseDefConfig, WorkflowConfig
+from pawc_kit.contracts import ConfigurationError
 from pawc_kit.session import WorkflowSession
-
-
-def _config(*, phases: list[PhaseDefConfig] | None = None, **workflow_kwargs) -> RootConfig:
-    """Build a RootConfig, optionally with workflow phases and overrides."""
-    wf = WorkflowConfig(phases=phases or [], **workflow_kwargs)
-    return RootConfig(skill=SkillConfig(name="test-skill", version="1.0.0"), workflow=wf)
-
-
-def _simple_phases() -> list[PhaseDefConfig]:
-    """Phase list matching make_simple_graph()."""
-    return [
-        PhaseDefConfig(
-            phase_id="work",
-            role_id="worker-role",
-            kind="executor",
-            on_complete=["review"],
-        ),
-        PhaseDefConfig(
-            phase_id="review",
-            role_id="reviewer-role",
-            kind="review",
-            can_request_changes_from=["work"],
-        ),
-    ]
-
+from session.conftest import make_config as _config
+from session.conftest import simple_phases as _simple_phases
 
 # ---------------------------------------------------------------------------
 # Constructor -- graph resolution
@@ -44,20 +20,20 @@ def _simple_phases() -> list[PhaseDefConfig]:
 def test_constructor_uses_explicit_graph_override() -> None:
     graph = make_simple_graph()
     session = WorkflowSession(config=_config(), graph=graph)
-    assert session._graph is graph
+    assert session._sc.graph is graph
 
 
 def test_constructor_builds_graph_from_config_phases() -> None:
     config = _config(phases=_simple_phases())
     session = WorkflowSession(config=config)
-    assert session._graph.phase_ids == ["work", "review"]
+    assert session._sc.graph.phase_ids == ["work", "review"]
 
 
 def test_constructor_explicit_graph_wins_over_config_phases() -> None:
     graph = make_simple_graph()
     config = _config(phases=_simple_phases())
     session = WorkflowSession(config=config, graph=graph)
-    assert session._graph is graph
+    assert session._sc.graph is graph
 
 
 def test_constructor_raises_when_no_graph_and_no_phases() -> None:
@@ -74,80 +50,80 @@ def test_constructor_raises_when_no_graph_and_no_phases() -> None:
 def test_constructor_uses_config_thresholds_when_no_override() -> None:
     config = _config(phases=_simple_phases(), confidence_threshold=70, max_iterations=5)
     session = WorkflowSession(config=config)
-    assert session._confidence_threshold == 70
-    assert session._max_iterations == 5
+    assert session._sc.confidence_threshold == 70
+    assert session._sc.max_iterations == 5
 
 
 def test_constructor_explicit_threshold_wins_over_config() -> None:
     config = _config(phases=_simple_phases(), confidence_threshold=70)
     session = WorkflowSession(config=config, confidence_threshold=90)
-    assert session._confidence_threshold == 90
+    assert session._sc.confidence_threshold == 90
 
 
 def test_constructor_explicit_max_iterations_wins_over_config() -> None:
     config = _config(phases=_simple_phases(), max_iterations=3)
     session = WorkflowSession(config=config, max_iterations=8)
-    assert session._max_iterations == 8
+    assert session._sc.max_iterations == 8
 
 
 def test_constructor_explicit_max_feedback_rounds_wins_over_config() -> None:
     config = _config(phases=_simple_phases(), max_feedback_rounds=1)
     session = WorkflowSession(config=config, max_feedback_rounds=5)
-    assert session._max_feedback_rounds == 5
+    assert session._sc.max_feedback_rounds == 5
 
 
 def test_constructor_confidence_floor_omitted_uses_config() -> None:
     config = _config(phases=_simple_phases(), confidence_floor=40)
     session = WorkflowSession(config=config)
-    assert session._confidence_floor == 40
+    assert session._sc.confidence_floor == 40
 
 
 def test_constructor_confidence_floor_explicit_value_wins() -> None:
     config = _config(phases=_simple_phases(), confidence_floor=40)
     session = WorkflowSession(config=config, confidence_floor=60)
-    assert session._confidence_floor == 60
+    assert session._sc.confidence_floor == 60
 
 
 def test_constructor_confidence_floor_explicit_none_disables_floor() -> None:
     """confidence_floor=None must override a config value and disable the floor."""
     config = _config(phases=_simple_phases(), confidence_floor=40)
     session = WorkflowSession(config=config, confidence_floor=None)
-    assert session._confidence_floor is None
+    assert session._sc.confidence_floor is None
 
 
 def test_constructor_uses_config_run_directory() -> None:
     config = _config(phases=_simple_phases(), run_directory="sessions/discovery")
     session = WorkflowSession(config=config)
-    assert session._run_directory == "sessions/discovery"
+    assert session._sc.run_directory == "sessions/discovery"
 
 
 def test_constructor_explicit_run_directory_wins_over_config() -> None:
     config = _config(phases=_simple_phases(), run_directory="sessions/discovery")
     session = WorkflowSession(config=config, run_directory="sessions/override")
-    assert session._run_directory == "sessions/override"
+    assert session._sc.run_directory == "sessions/override"
 
 
 def test_constructor_uses_config_state_filename() -> None:
     config = _config(phases=_simple_phases(), state_filename="run.json")
     session = WorkflowSession(config=config)
-    assert session._state_filename == "run.json"
+    assert session._sc.state_filename == "run.json"
 
 
 def test_constructor_explicit_state_filename_wins_over_config() -> None:
     config = _config(phases=_simple_phases(), state_filename="run.json")
     session = WorkflowSession(config=config, state_filename="override.json")
-    assert session._state_filename == "override.json"
+    assert session._sc.state_filename == "override.json"
 
 
 def test_constructor_defaults_match_workflow_config_defaults() -> None:
     """When neither code overrides nor config overrides are given, defaults are 85/10/3."""
     config = _config(phases=_simple_phases())
     session = WorkflowSession(config=config)
-    assert session._confidence_threshold == 85
-    assert session._max_iterations == 10
-    assert session._max_feedback_rounds == 3
-    assert session._run_directory == "sessions/execution"
-    assert session._state_filename == "state.json"
+    assert session._sc.confidence_threshold == 85
+    assert session._sc.max_iterations == 10
+    assert session._sc.max_feedback_rounds == 3
+    assert session._sc.run_directory == "sessions/execution"
+    assert session._sc.state_filename == "state.json"
 
 
 # ---------------------------------------------------------------------------
@@ -169,13 +145,13 @@ def test_from_config_loads_yaml_and_builds_graph(fixtures_dir: Path) -> None:
     """from_config() without graph= builds graph from YAML workflow.phases."""
     session = WorkflowSession.from_config(fixtures_dir / "config.yaml")
     assert session.config.skill.name == "test-workflow"
-    assert session._graph.phase_ids == ["work", "review"]
+    assert session._sc.graph.phase_ids == ["work", "review"]
 
 
 def test_from_config_with_graph_override_ignores_yaml_phases(fixtures_dir: Path) -> None:
     graph = make_simple_graph()
     session = WorkflowSession.from_config(fixtures_dir / "config.yaml", graph=graph)
-    assert session._graph is graph
+    assert session._sc.graph is graph
 
 
 def test_from_config_missing_file_raises(tmp_path: Path) -> None:
@@ -189,18 +165,18 @@ def test_from_config_run_directory_override(fixtures_dir: Path) -> None:
         fixtures_dir / "config.yaml",
         run_directory="sessions/discovery",
     )
-    assert session._run_directory == "sessions/discovery"
+    assert session._sc.run_directory == "sessions/discovery"
 
 
 def test_from_config_uses_yaml_run_directory_when_no_override(fixtures_dir: Path) -> None:
     """When run_directory not passed, config.workflow.run_directory is used."""
     session = WorkflowSession.from_config(fixtures_dir / "config.yaml")
-    assert session._run_directory == "sessions/execution"
+    assert session._sc.run_directory == "sessions/execution"
 
 
 def test_from_config_confidence_threshold_override(fixtures_dir: Path) -> None:
     session = WorkflowSession.from_config(fixtures_dir / "config.yaml", confidence_threshold=60)
-    assert session._confidence_threshold == 60
+    assert session._sc.confidence_threshold == 60
 
 
 def test_from_config_yaml_without_phases_raises(tmp_path: Path) -> None:
