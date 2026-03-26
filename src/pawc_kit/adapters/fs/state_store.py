@@ -74,6 +74,24 @@ class FsStateStore:
         atomic_write(self._revision_path, "0")
         return StoredSession(state=state, revision=0)
 
+    def list(self) -> list[StoredSession]:
+        if not self._state_path.exists():
+            return []
+        state = SessionState.model_validate_json(self._state_path.read_text(encoding="utf-8"))
+        return [StoredSession(state=state, revision=self._read_revision())]
+
+    def delete(self, session_id: str) -> None:
+        if not self._state_path.exists():
+            return
+        state = SessionState.model_validate_json(self._state_path.read_text(encoding="utf-8"))
+        if state.session_id != session_id:
+            raise StateError(
+                f"Stored session_id {state.session_id!r} does not match "
+                f"delete target {session_id!r}"
+            )
+        self._state_path.unlink(missing_ok=True)
+        self._revision_path.unlink(missing_ok=True)
+
     def _read_revision(self) -> int:
         if not self._revision_path.exists():
             return 0
@@ -105,6 +123,12 @@ class AsyncFsStateStore:
 
     async def initialize(self, session_metadata: SessionMetadata) -> StoredSession:
         return await asyncio.to_thread(self._store.initialize, session_metadata)
+
+    async def list(self) -> list[StoredSession]:
+        return await asyncio.to_thread(self._store.list)
+
+    async def delete(self, session_id: str) -> None:
+        await asyncio.to_thread(self._store.delete, session_id)
 
 
 __all__ = ["AsyncFsStateStore", "FsStateStore"]

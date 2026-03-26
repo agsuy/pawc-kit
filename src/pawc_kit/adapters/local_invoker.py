@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Mapping
 
 from pawc_kit.contracts.errors import ConfigurationError, TransitionError
 from pawc_kit.workflow.roles import (
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 def _validate_bindings(
-    bindings: dict[str, object],
+    bindings: Mapping[str, object],
     graph: "PhaseGraph",
     executor_type: type,
     reviewer_type: type,
@@ -31,18 +31,15 @@ def _validate_bindings(
         role = bindings.get(phase.role_id)
         if role is None:
             raise ConfigurationError(
-                f"Phase {phase.phase_id!r} references unregistered "
-                f"role_id {phase.role_id!r}"
+                f"Phase {phase.phase_id!r} references unregistered role_id {phase.role_id!r}"
             )
         if phase.kind == "executor" and not isinstance(role, executor_type):
             raise ConfigurationError(
-                f"role_id {phase.role_id!r} is bound to a "
-                "non-executor implementation"
+                f"role_id {phase.role_id!r} is bound to a non-executor implementation"
             )
         if phase.kind == "review" and not isinstance(role, reviewer_type):
             raise ConfigurationError(
-                f"role_id {phase.role_id!r} is bound to a "
-                "non-reviewer implementation"
+                f"role_id {phase.role_id!r} is bound to a non-reviewer implementation"
             )
 
 
@@ -104,9 +101,7 @@ class AsyncLocalRoleInvoker:
         self._bindings[role_id] = role
 
     def validate(self, graph: PhaseGraph) -> None:
-        _validate_bindings(
-            self._bindings, graph, AsyncExecutor, AsyncReviewer
-        )
+        _validate_bindings(self._bindings, graph, AsyncExecutor, AsyncReviewer)
 
     async def invoke_executor(self, req: ExecutionRequest) -> ExecutionResult:
         """Dispatch to a registered ``AsyncExecutor``."""
