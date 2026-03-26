@@ -9,7 +9,12 @@ import pytest
 
 from pawc_kit.adapters.fs.runtime import AsyncFsRuntimeBackend, FsRuntimeBackend
 from pawc_kit.contracts.errors import StateNotFoundError
-from pawc_kit.ports.runtime import AsyncRuntimeBackend, RuntimeBackend
+from pawc_kit.ports.runtime import (
+    AsyncResolvedBackend,
+    AsyncRuntimeBackend,
+    ResolvedBackend,
+    RuntimeBackend,
+)
 from pawc_kit.ports.state import SessionMetadata
 
 # ---------------------------------------------------------------------------
@@ -154,3 +159,112 @@ def test_async_resolve_state_store_round_trip(tmp_path: Path) -> None:
         assert loaded.state.status == "in_progress"
 
     asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# ResolvedBackend / AsyncResolvedBackend — artifact reader/writer validation
+# ---------------------------------------------------------------------------
+
+
+class _StubStateStore:
+    """Minimal stub satisfying the StateStore protocol shape for dataclass tests."""
+
+    def load(self, session_id: str):  # noqa: ANN201
+        raise NotImplementedError
+
+    def initialize(self, session_metadata: object):  # noqa: ANN201
+        raise NotImplementedError
+
+    def save(self, snapshot: object, *, expected_revision: object):  # noqa: ANN201
+        raise NotImplementedError
+
+    def list(self) -> list:  # noqa: ANN201
+        raise NotImplementedError
+
+    def delete(self, session_id: str) -> None:
+        raise NotImplementedError
+
+
+class _StubArtifactStore:
+    """Stub satisfying ArtifactStore (reader + writer combined)."""
+
+    def load_artifact(self, ref: object) -> bytes:
+        raise NotImplementedError
+
+    def save_handoff(self, *a: object) -> object:  # noqa: ANN201
+        raise NotImplementedError
+
+    def save_decision(self, *a: object) -> object:  # noqa: ANN201
+        raise NotImplementedError
+
+    def save_file(self, *a: object) -> object:  # noqa: ANN201
+        raise NotImplementedError
+
+
+class _StubReader:
+    """Stub satisfying ArtifactReader only."""
+
+    def load_artifact(self, ref: object) -> bytes:
+        raise NotImplementedError
+
+
+class _StubWriter:
+    """Stub satisfying ArtifactWriter only."""
+
+    def save_handoff(self, *a: object) -> object:  # noqa: ANN201
+        raise NotImplementedError
+
+    def save_decision(self, *a: object) -> object:  # noqa: ANN201
+        raise NotImplementedError
+
+    def save_file(self, *a: object) -> object:  # noqa: ANN201
+        raise NotImplementedError
+
+
+def test_resolved_backend_store_only() -> None:
+    rb = ResolvedBackend(
+        state_store=_StubStateStore(),  # type: ignore[arg-type]
+        artifact_store=_StubArtifactStore(),  # type: ignore[arg-type]
+    )
+    assert rb.artifact_reader is None
+    assert rb.artifact_writer is None
+
+
+def test_resolved_backend_with_reader_and_writer() -> None:
+    reader = _StubReader()
+    writer = _StubWriter()
+    rb = ResolvedBackend(
+        state_store=_StubStateStore(),  # type: ignore[arg-type]
+        artifact_store=_StubArtifactStore(),  # type: ignore[arg-type]
+        artifact_reader=reader,  # type: ignore[arg-type]
+        artifact_writer=writer,  # type: ignore[arg-type]
+    )
+    assert rb.artifact_reader is reader
+    assert rb.artifact_writer is writer
+
+
+def test_resolved_backend_rejects_reader_without_writer() -> None:
+    with pytest.raises(ValueError, match="both be set or both be None"):
+        ResolvedBackend(
+            state_store=_StubStateStore(),  # type: ignore[arg-type]
+            artifact_store=_StubArtifactStore(),  # type: ignore[arg-type]
+            artifact_reader=_StubReader(),  # type: ignore[arg-type]
+        )
+
+
+def test_resolved_backend_rejects_writer_without_reader() -> None:
+    with pytest.raises(ValueError, match="both be set or both be None"):
+        ResolvedBackend(
+            state_store=_StubStateStore(),  # type: ignore[arg-type]
+            artifact_store=_StubArtifactStore(),  # type: ignore[arg-type]
+            artifact_writer=_StubWriter(),  # type: ignore[arg-type]
+        )
+
+
+def test_async_resolved_backend_rejects_mismatched_pair() -> None:
+    with pytest.raises(ValueError, match="both be set or both be None"):
+        AsyncResolvedBackend(
+            state_store=_StubStateStore(),  # type: ignore[arg-type]
+            artifact_store=_StubArtifactStore(),  # type: ignore[arg-type]
+            artifact_reader=_StubReader(),  # type: ignore[arg-type]
+        )
