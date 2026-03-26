@@ -1,0 +1,83 @@
+# ============================================================================
+# pawc-kit  templates/workflow/execution-multi-phase.yaml  --  Multi-phase execution workflow
+# ============================================================================
+#
+# Native RootConfig layout — field tables and semantics: docs/workflow-config-reference.md
+#
+# Four phases demonstrating:
+#   - Chained executors (research -> implement)
+#   - Confidence-based routing (implement routes to deep-review or quick-review)
+#   - Feedback loops (both reviews can request changes from implement)
+#   - Context scoping via context_sources (child context_ids, not phase ids)
+#   - Per-phase role_overrides
+#   - Per-phase max_feedback_rounds override
+#   - confidence_floor: low executor scores finalize the run as failed (no exception)
+#
+# Load with:
+#   session = WorkflowSession.from_config("templates/workflow/execution-multi-phase.yaml")
+# ============================================================================
+
+skill:
+  name: multi-phase-skill
+  version: "1.0.0"
+  description: Demonstrates advanced multi-phase execution patterns
+
+state_directory: ./runs
+
+workflow:
+  confidence_threshold: 85
+  max_iterations: 15
+  max_feedback_rounds: 3
+  confidence_floor: 30
+
+  phases:
+    # Phase 1: research -- gather context before implementation
+    - phase_id: research
+      role_id: researcher-role
+      kind: executor
+      on_complete:
+        - implement
+
+    # Phase 2: implement -- main work, routes to review based on confidence
+    - phase_id: implement
+      role_id: implementer-role
+      kind: executor
+      on_complete:
+        - deep-review
+        - quick-review
+      # Composite ContextPack: filter to children whose metadata.context_id is listed.
+      # Example value is a placeholder — use real child pack ids in production, not phase ids.
+      context_sources:
+        - research-child-ctx
+      role_overrides:
+        temperature: 0.2
+      routing:
+        - target: deep-review
+          confidence_lt: 70
+        - target: quick-review
+          confidence_gte: 70
+
+    # Phase 3: deep-review -- thorough review for low-confidence work
+    - phase_id: deep-review
+      role_id: senior-reviewer-role
+      kind: review
+      can_request_changes_from:
+        - implement
+      max_feedback_rounds: 5
+      on_approve:
+        - finalize
+
+    # Phase 4: quick-review -- lighter review for high-confidence work
+    - phase_id: quick-review
+      role_id: reviewer-role
+      kind: review
+      can_request_changes_from:
+        - implement
+      max_feedback_rounds: 1
+      on_approve:
+        - finalize
+
+    # Phase 5: finalize -- wrap up
+    - phase_id: finalize
+      role_id: finalizer-role
+      kind: executor
