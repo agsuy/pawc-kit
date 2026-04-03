@@ -27,6 +27,22 @@ class StoredSession:
     revision: str | int
 
 
+@dataclass(frozen=True)
+class SessionSummary:
+    """Lightweight session envelope without iteration/review arrays."""
+
+    session_id: str
+    skill_name: str
+    skill_version: str
+    current_phase: str
+    status: str
+    started_at: str
+    completed_at: str | None
+    context_id: str | None
+    feedback_loops: int
+    revision: str | int
+
+
 @runtime_checkable
 class StateStore(Protocol):
     """Sync state persistence contract."""
@@ -43,6 +59,8 @@ class StateStore(Protocol):
     def initialize(self, session_metadata: SessionMetadata) -> StoredSession: ...
 
     def list(self) -> list[StoredSession]: ...
+
+    def list_sessions(self) -> list[SessionSummary]: ...
 
     def delete(self, session_id: str) -> None: ...
 
@@ -64,12 +82,15 @@ class AsyncStateStore(Protocol):
 
     async def list(self) -> list[StoredSession]: ...
 
+    async def list_sessions(self) -> list[SessionSummary]: ...
+
     async def delete(self, session_id: str) -> None: ...
 
 
 __all__ = [
     "AsyncStateStore",
     "SessionMetadata",
+    "SessionSummary",
     "StateStore",
     "StoredSession",
 ]

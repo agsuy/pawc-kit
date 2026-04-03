@@ -20,7 +20,7 @@ from pawc_kit.ports.runtime import (
     ResolvedBackend,
     RuntimeBackend,
 )
-from pawc_kit.ports.state import AsyncStateStore, SessionMetadata, StateStore, StoredSession
+from pawc_kit.ports.state import AsyncStateStore, SessionMetadata, SessionSummary, StateStore, StoredSession
 
 __all__ = [
     "ArtifactReader",
@@ -44,6 +44,7 @@ __all__ = [
     "RunSignal",
     "RuntimeBackend",
     "SessionMetadata",
+    "SessionSummary",
     "StateStore",
     "StoredSession",
     "WorkflowObserver",

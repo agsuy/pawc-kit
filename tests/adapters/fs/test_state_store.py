@@ -9,7 +9,7 @@ import pytest
 
 from pawc_kit.adapters.fs.state_store import AsyncFsStateStore, FsStateStore
 from pawc_kit.contracts.errors import ConcurrencyError, StateError, StateNotFoundError
-from pawc_kit.ports.state import SessionMetadata, StoredSession
+from pawc_kit.ports.state import SessionMetadata, SessionSummary, StoredSession
 
 
 def _metadata(session_id: str = "sess-1") -> SessionMetadata:
@@ -156,6 +156,52 @@ def test_async_state_store_save_increments_revision(tmp_path: Path) -> None:
     updated = initial.state.model_copy(update={"status": "in_progress"})
     saved = asyncio.run(store.save(updated, expected_revision=initial.revision))
     assert saved.revision == 1
+
+
+# ---------------------------------------------------------------------------
+# list_sessions
+# ---------------------------------------------------------------------------
+
+
+def test_list_sessions_empty(tmp_path: Path) -> None:
+    store = FsStateStore(tmp_path)
+    assert store.list_sessions() == []
+
+
+def test_list_sessions_returns_summary(tmp_path: Path) -> None:
+    store = FsStateStore(tmp_path)
+    store.initialize(_metadata())
+    summaries = store.list_sessions()
+    assert len(summaries) == 1
+    s = summaries[0]
+    assert isinstance(s, SessionSummary)
+    assert s.session_id == "sess-1"
+    assert s.skill_name == "skill"
+    assert s.skill_version == "1.0.0"
+    assert s.current_phase == "work"
+    assert s.status == "initialized"
+    assert s.completed_at is None
+    assert s.feedback_loops == 0
+    assert s.revision == 0
+
+
+def test_list_sessions_reflects_save(tmp_path: Path) -> None:
+    store = FsStateStore(tmp_path)
+    initial = store.initialize(_metadata())
+    updated = initial.state.model_copy(update={"status": "in_progress", "feedback_loops": 2})
+    store.save(updated, expected_revision=initial.revision)
+    summaries = store.list_sessions()
+    assert summaries[0].status == "in_progress"
+    assert summaries[0].feedback_loops == 2
+    assert summaries[0].revision == 1
+
+
+def test_async_list_sessions(tmp_path: Path) -> None:
+    store = AsyncFsStateStore(tmp_path)
+    asyncio.run(store.initialize(_metadata()))
+    summaries = asyncio.run(store.list_sessions())
+    assert len(summaries) == 1
+    assert summaries[0].session_id == "sess-1"
 
 
 def test_async_state_store_optimistic_locking(tmp_path: Path) -> None:
