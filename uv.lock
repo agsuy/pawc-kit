@@ -456,7 +456,6 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "semver" },
-    { name = "toon-formatter" },
 ]
 
 [package.optional-dependencies]
@@ -467,10 +466,13 @@ otel = [
 semantic = [
     { name = "semantic-text-splitter" },
 ]
+toon = [
+    { name = "toon-formatter" },
+]
 
 [package.dev-dependencies]
 dev = [
-    { name = "pawc-kit", extra = ["otel", "semantic"] },
+    { name = "pawc-kit", extra = ["otel", "semantic", "toon"] },
     { name = "pyright" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -486,13 +488,13 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "semantic-text-splitter", marker = "extra == 'semantic'", specifier = ">=0.18" },
     { name = "semver", specifier = ">=3.0,<4" },
-    { name = "toon-formatter", specifier = ">=1.0" },
+    { name = "toon-formatter", marker = "extra == 'toon'", specifier = ">=1.0" },
 ]
-provides-extras = ["otel", "semantic"]
+provides-extras = ["otel", "semantic", "toon"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "pawc-kit", extras = ["otel", "semantic"] },
+    { name = "pawc-kit", extras = ["otel", "semantic", "toon"] },
     { name = "pyright", specifier = ">=1.1.408" },
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "pytest-cov", specifier = ">=6.0" },
