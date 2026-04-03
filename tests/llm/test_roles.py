@@ -322,6 +322,41 @@ def test_quality_gate_overrides_approve_when_critical_exceeds_limit() -> None:
     assert "critical" in result.decision.gate_override_reason
 
 
+def test_quality_gate_default_target_phase_when_multi_target_omitted() -> None:
+    """Gate forces REQUEST_CHANGES; omit target_phase -> default last feedback target."""
+    backend = MockBackend()
+    output = _reviewer_output_with_findings("APPROVE", [_finding("critical")])
+    backend.queue_model(output)
+    role = LLMReviewerRole(
+        backend, quality_gates={"critical_findings_allowed": 0, "high_findings_allowed": 1}
+    )
+    result = role.review(
+        make_review_ctx(request_change_targets=["research", "synthesis"]),
+    )
+    assert result.decision.decision == "REQUEST_CHANGES"
+    assert result.decision.target_phase == "synthesis"
+
+
+def test_request_changes_without_target_phase_defaults_last_multi_target() -> None:
+    """Model REQUEST_CHANGES with no target_phase -- default for multi-target graphs."""
+    backend = MockBackend()
+    output = ReviewerOutput(
+        decision="REQUEST_CHANGES",
+        confidence_score=70,
+        counts_verified=False,
+        summary="needs fixes",
+        findings=[],
+        target_phase=None,
+    )
+    backend.queue_model(output)
+    role = LLMReviewerRole(backend)
+    result = role.review(
+        make_review_ctx(request_change_targets=["research", "synthesis"]),
+    )
+    assert result.decision.decision == "REQUEST_CHANGES"
+    assert result.decision.target_phase == "synthesis"
+
+
 def test_quality_gate_overrides_approve_when_high_exceeds_limit() -> None:
     """Model returns APPROVE but has two high findings -- gate must force REQUEST_CHANGES."""
     backend = MockBackend()

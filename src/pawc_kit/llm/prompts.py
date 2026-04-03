@@ -14,6 +14,7 @@ from pawc_kit.contracts.config import (
     EfficiencyConfig,
     RoleConfig,
 )
+from pawc_kit.contracts.errors import ConfigurationError
 
 if TYPE_CHECKING:
     from pawc_kit.contracts.execution import ExecutionRequest, ReviewRequest
@@ -43,8 +44,30 @@ def _resolve_compressor(config: CompressionConfig) -> ContextCompressor:
     return MarkdownCompressor()
 
 
+def _role_finding_categories_list(role_config: RoleConfig | None) -> list[str] | None:
+    """Categories from ``RoleConfig.model_extra['finding_categories']`` when valid.
+
+    Only a non-empty ``list`` or ``tuple`` of items counts; other shapes are ignored.
+    """
+    if role_config is None:
+        return None
+    extra = role_config.model_extra or {}
+    raw = extra.get("finding_categories")
+    if isinstance(raw, (list, tuple)) and raw:
+        return list(raw)
+    return None
+
+
 def _to_toon(data: list[dict]) -> str:
-    from toon import ToonEncoder
+    try:
+        from toon import ToonEncoder
+    except ImportError as exc:
+        raise ConfigurationError(
+            "prompt_verbosity 'compact' requires the optional 'toon' extra "
+            "(the `toon` module from package toon-formatter). "
+            "Install with: pip install 'pawc-kit[toon]' or uv add 'pawc-kit[toon]'. "
+            "Alternatively set prompt_verbosity to 'full', 'json', or 'jsonl'."
+        ) from exc
 
     return ToonEncoder().encode(data)
 
@@ -298,11 +321,10 @@ def role_section(role_config: RoleConfig | None) -> str:
     if role_config.review_criteria:
         parts.append("Review criteria:")
         parts.extend(f"- {item}" for item in role_config.review_criteria)
-    extra = role_config.model_extra or {}
-    finding_categories = extra.get("finding_categories")
-    if isinstance(finding_categories, (list, tuple)) and finding_categories:
+    role_cats = _role_finding_categories_list(role_config)
+    if role_cats:
         parts.append("Allowed finding categories:")
-        parts.extend(f"- {item}" for item in finding_categories)
+        parts.extend(f"- {item}" for item in role_cats)
     return "\n".join(parts)
 
 
@@ -480,6 +502,15 @@ class DefaultPromptAssembler:
         skip_schema: bool = False,
         output_model: type[BaseModel] | None = None,
     ) -> tuple[str, str]:
+        """Build reviewer system/user prompts.
+
+        Finding categories: non-empty ``finding_categories`` on ``role_config``
+        extras (via :func:`role_section` as "Allowed finding categories") take
+        precedence. The ``finding_categories`` argument adds a separate line
+        only when the role does not define categories in extras—typically the
+        workflow-level list from the template invoker. Uses the resolved
+        ``role_config`` passed in (including any phase ``role_overrides`` merge).
+        """
         if output_model is None:
             from pawc_kit.llm.roles import ReviewerOutput
 
@@ -501,7 +532,8 @@ class DefaultPromptAssembler:
                 f"critical or more than {high} high severity issues, "
                 f"your decision MUST be REQUEST_CHANGES."
             )
-        if finding_categories:
+        role_cats = _role_finding_categories_list(role_config)
+        if finding_categories and not role_cats:
             joined = ", ".join(finding_categories)
             system_parts.append(
                 "Finding categories (use only these category names for findings when applicable): "

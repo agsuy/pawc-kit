@@ -26,6 +26,14 @@ class PromptAssembler(Protocol):
 
     The default implementation is
     :class:`~pawc_kit.llm.prompts.DefaultPromptAssembler`.
+
+    For ``reviewer_prompts``, ``finding_categories`` is workflow-level input
+    (e.g. template top-level or discovery config).
+    :class:`~pawc_kit.llm.prompts.DefaultPromptAssembler` does not emit the extra
+    "Finding categories …" sentence when the resolved
+    ``role_config`` already carries a non-empty ``finding_categories`` list in
+    ``model_extra``—those appear only under :func:`~pawc_kit.llm.prompts.role_section`
+    bullets. Custom assemblers may apply a different policy but should document it.
     """
 
     def executor_prompts(

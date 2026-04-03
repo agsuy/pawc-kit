@@ -44,6 +44,7 @@ def make_review_ctx(
     *,
     role_overrides: dict | None = None,
     context: ContextPayload | None = None,
+    request_change_targets: list[str] | None = None,
 ) -> ReviewRequest:
     return ReviewRequest(
         session=make_session().model_copy(update={"current_phase": "review"}),
@@ -55,7 +56,9 @@ def make_review_ctx(
         ),
         history=WorkflowHistoryView(iterations=[], reviews=[]),
         context=context if context is not None else ContextPayload.empty(),
-        request_change_targets=["work"],
+        request_change_targets=(
+            request_change_targets if request_change_targets is not None else ["work"]
+        ),
         approval_targets=[],
     )
 

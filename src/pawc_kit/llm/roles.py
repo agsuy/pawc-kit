@@ -262,6 +262,30 @@ def _enforce_quality_gates(
     return decision, gate_override_reason
 
 
+def _resolve_request_changes_target_phase(
+    decision: _ReviewDecision,
+    output_target: str | None,
+    request_change_targets: list[str],
+) -> str | None:
+    """Fill ``target_phase`` when it is missing under ``REQUEST_CHANGES``.
+
+    For a single ``can_request_changes_from`` target the engine resolves the
+    loop target without ``target_phase``. For multiple targets the workflow
+    requires a choice; if the model omits it (or a quality gate upgrades
+    ``APPROVE`` → ``REQUEST_CHANGES`` without one), default to the **last**
+    entry in *request_change_targets* (YAML declaration order: typically the
+    phase whose outputs the reviewer evaluated most directly, e.g. *synthesis*
+    before ``ai_review`` in discovery templates).
+    """
+    if decision != "REQUEST_CHANGES":
+        return output_target
+    if output_target is not None:
+        return output_target
+    if len(request_change_targets) <= 1:
+        return None
+    return request_change_targets[-1]
+
+
 # ---------------------------------------------------------------------------
 # Backfill helpers
 # ---------------------------------------------------------------------------
@@ -477,6 +501,9 @@ class LLMReviewerRole(_LLMRoleBase[LLMBackend], Reviewer):
         output = structured.call(system, user, ReviewerOutput)
         self.last_usage = structured.last_usage
         decision, gate_override_reason = _enforce_quality_gates(output, self._quality_gates)
+        target_phase = _resolve_request_changes_target_phase(
+            decision, output.target_phase, list(req.request_change_targets)
+        )
 
         chosen_next: str | None = None
         if decision == "APPROVE":
@@ -491,7 +518,7 @@ class LLMReviewerRole(_LLMRoleBase[LLMBackend], Reviewer):
                 counts_verified=output.counts_verified,
                 summary=output.summary,
                 findings=output.findings,
-                target_phase=output.target_phase,
+                target_phase=target_phase,
                 gate_override_reason=gate_override_reason,
             ),
             chosen_next=chosen_next,
@@ -587,6 +614,9 @@ class AsyncLLMReviewerRole(_LLMRoleBase[AsyncLLMBackend], AsyncReviewer):
         output = await structured.call(system, user, ReviewerOutput)
         self.last_usage = structured.last_usage
         decision, gate_override_reason = _enforce_quality_gates(output, self._quality_gates)
+        target_phase = _resolve_request_changes_target_phase(
+            decision, output.target_phase, list(req.request_change_targets)
+        )
 
         chosen_next: str | None = None
         if decision == "APPROVE":
@@ -601,7 +631,7 @@ class AsyncLLMReviewerRole(_LLMRoleBase[AsyncLLMBackend], AsyncReviewer):
                 counts_verified=output.counts_verified,
                 summary=output.summary,
                 findings=output.findings,
-                target_phase=output.target_phase,
+                target_phase=target_phase,
                 gate_override_reason=gate_override_reason,
             ),
             chosen_next=chosen_next,
