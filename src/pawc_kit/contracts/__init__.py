@@ -28,6 +28,7 @@ from pawc_kit.contracts.context import (
     AgentUsedEntry,
     CompositionEntry,
     ContextMetadata,
+    DiscoveryOrigin,
     ModelUsedEntry,
 )
 from pawc_kit.contracts.discovery import (
@@ -85,6 +86,7 @@ __all__ = [
     "DataCommandEntry",
     "DecisionPayload",
     "DiscoveryConfig",
+    "DiscoveryOrigin",
     "DiscoveryPhaseConfig",
     "EfficiencyConfig",
     "ExecutionRequest",

@@ -9,7 +9,13 @@ from typing import Any, Literal, Mapping
 
 from pawc_kit._time import utc_now
 from pawc_kit.context import ContextPack, accessible_packs
-from pawc_kit.contracts.artifacts import DecisionPayload
+from pawc_kit.contracts.artifacts import (
+    DecisionPayload,
+    HandoffArtifact,
+    HandoffArtifactMetadata,
+    HandoffArtifactPart,
+    HandoffContext,
+)
 from pawc_kit.contracts.discovery import QuestionEntry
 from pawc_kit.contracts.errors import ConfigurationError, StateNotFoundError, TransitionError
 from pawc_kit.contracts.events import (
@@ -108,6 +114,31 @@ def _count_iterations(state: SessionState, phase_id: str) -> int:
 
 def _count_reviews(state: SessionState, phase_id: str) -> int:
     return sum(1 for entry in state.reviews if entry.phase_id == phase_id)
+
+
+def _canonical_discovery_handoff_artifact(
+    *,
+    phase_id: str,
+    role_id: str,
+    handoff: HandoffContext,
+) -> str:
+    envelope = HandoffArtifact(
+        metadata=HandoffArtifactMetadata(phase_id=phase_id, role_id=role_id),
+        parts=[HandoffArtifactPart(body=handoff)],
+    )
+    return envelope.model_dump_json(indent=2)
+
+
+def _requires_canonical_discovery_handoff(
+    phase: PhaseDefinition,
+    runtime: _Runtime,
+    context_pack_writer: AsyncContextPackWriter | None,
+) -> bool:
+    return (
+        phase.phase_id == "finalize"
+        and context_pack_writer is not None
+        and runtime.state.context_id is not None
+    )
 
 
 def _find_committed_human_review(
@@ -507,7 +538,15 @@ class _CancelRequested(_StopRequested):
 
 
 class WorkflowEngine:
-    """Sync workflow engine using in-memory state with step-level durable flushes."""
+    """Sync workflow engine using in-memory state with step-level durable flushes.
+
+    Discovery workflows (graphs built via
+    :meth:`~pawc_kit.workflow.graph.PhaseGraph.from_discovery_config`) are
+    **not supported** by the sync engine because they require context pack
+    writes, adhoc question persistence, and pack finalization — all of which
+    need the async :class:`AsyncContextPackWriter` port.  Use
+    :class:`AsyncWorkflowEngine` for discovery workflows.
+    """
 
     def __init__(
         self,
@@ -529,6 +568,12 @@ class WorkflowEngine:
         controller: RunController | None = None,
         adhoc_questions: bool = False,
     ) -> None:
+        if graph.discovery:
+            raise ConfigurationError(
+                "Discovery workflows require AsyncWorkflowEngine. "
+                "The sync WorkflowEngine does not support context pack "
+                "writes, adhoc questions, or pack finalization."
+            )
         self._graph = graph
         self._state_store = state_store
         self._artifact_reader: ArtifactReader = artifact_reader or artifact_store
@@ -1237,6 +1282,25 @@ class AsyncWorkflowEngine:
                 for f in result.files:
                     await self._context_pack_writer.write_discovery_file(
                         runtime.state.context_id, f.ref, f.content
+                    )
+                if _requires_canonical_discovery_handoff(phase, runtime, self._context_pack_writer):
+                    if result.handoff is None:
+                        _logger.error(
+                            "Discovery finalize phase %s completed without handoff context; "
+                            "abandoning run %s",
+                            phase.phase_id,
+                            runtime.state.session_id,
+                        )
+                        await self._finalize(runtime, status="abandoned")
+                        return
+                    await self._context_pack_writer.write_discovery_file(
+                        runtime.state.context_id,
+                        "discovery/handoff-context.json",
+                        _canonical_discovery_handoff_artifact(
+                            phase_id=phase.phase_id,
+                            role_id=result.role_id,
+                            handoff=result.handoff,
+                        ),
                     )
 
             if result.handoff:

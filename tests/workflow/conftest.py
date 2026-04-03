@@ -7,7 +7,7 @@ import pytest
 from pawc_kit.contracts.artifacts import HandoffContext
 from pawc_kit.contracts.errors import ConcurrencyError, StateNotFoundError
 from pawc_kit.contracts.state import ArtifactRef, SessionState
-from pawc_kit.ports.state import SessionMetadata, StoredSession
+from pawc_kit.ports.state import SessionMetadata, SessionSummary, StoredSession
 
 
 class MemoryArtifactStore:
@@ -125,6 +125,25 @@ class MemoryStateStore:
             )
         ]
 
+    def list_sessions(self) -> list[SessionSummary]:
+        if self._stored is None:
+            return []
+        s = self._stored.state
+        return [
+            SessionSummary(
+                session_id=s.session_id,
+                skill_name=s.skill_name,
+                skill_version=s.skill_version,
+                current_phase=s.current_phase,
+                status=s.status,
+                started_at=s.started_at,
+                completed_at=s.completed_at,
+                context_id=s.context_id,
+                feedback_loops=s.feedback_loops,
+                revision=self._stored.revision,
+            )
+        ]
+
     def delete(self, session_id: str) -> None:
         if self._stored is None:
             return
@@ -160,6 +179,9 @@ class AsyncMemoryStateStore:
 
     async def list(self) -> list[StoredSession]:
         return self._sync.list()
+
+    async def list_sessions(self) -> list[SessionSummary]:
+        return self._sync.list_sessions()
 
     async def delete(self, session_id: str) -> None:
         self._sync.delete(session_id)

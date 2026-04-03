@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
+
+import yaml
 
 from pawc_kit._fs_atomic import atomic_write
 from pawc_kit.config import load_root_config
 from pawc_kit.contracts.artifacts import HandoffArtifact, HandoffContext
 from pawc_kit.contracts.config import RootConfig
-from pawc_kit.contracts.context import CompositionEntry, ContextMetadata
+from pawc_kit.contracts.context import ContextMetadata, DiscoveryOrigin
 from pawc_kit.contracts.errors import ConfigurationError
 from pawc_kit.contracts.state import SessionState
 from pawc_kit.validators import validate_composition
@@ -24,6 +25,7 @@ class ContextPack:
     metadata: ContextMetadata
     request_files: dict[str, str]
     discovery_handoff: HandoffContext | None
+    discovery_origin: DiscoveryOrigin | None = None
     children: list[ContextPack] = field(default_factory=list)
 
     @property
@@ -39,6 +41,7 @@ class ContextPack:
             metadata=ContextMetadata(context_id="none", created_at="1970-01-01T00:00:00Z"),
             request_files={},
             discovery_handoff=None,
+            discovery_origin=None,
             children=[],
         )
 
@@ -142,6 +145,26 @@ def load_discovery_handoff(pack_path: Path) -> HandoffContext | None:
 
 
 # ------------------------------------------------------------------
+# 4b. load_discovery_origin
+# ------------------------------------------------------------------
+
+
+def load_discovery_origin(pack_path: Path) -> DiscoveryOrigin | None:
+    """Load portable discovery rebuild provenance from ``config/discovery-origin.yaml``."""
+    origin_path = Path(pack_path) / "config" / "discovery-origin.yaml"
+    if not origin_path.exists():
+        return None
+    try:
+        payload = yaml.safe_load(origin_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ConfigurationError(f"Malformed discovery-origin.yaml in {pack_path}: {exc}") from exc
+    try:
+        return DiscoveryOrigin.model_validate(payload)
+    except Exception as exc:
+        raise ConfigurationError(f"Invalid discovery-origin.yaml in {pack_path}: {exc}") from exc
+
+
+# ------------------------------------------------------------------
 # Private: _load_leaf_pack
 # ------------------------------------------------------------------
 
@@ -155,11 +178,13 @@ def _load_leaf_pack(state_directory: Path, context_id: str) -> ContextPack:
     metadata = load_context_metadata(pack_path)
     request = read_request_files(pack_path)
     handoff = load_discovery_handoff(pack_path)
+    origin = load_discovery_origin(pack_path)
     return ContextPack(
         path=pack_path,
         metadata=metadata,
         request_files=request,
         discovery_handoff=handoff,
+        discovery_origin=origin,
         children=[],
     )
 
@@ -213,12 +238,14 @@ def load_context_pack(
     metadata = load_context_metadata(pack_path)
     request = read_request_files(pack_path)
     handoff = load_discovery_handoff(pack_path)
+    origin = load_discovery_origin(pack_path)
     children = resolve_children(state_directory, metadata, max_composition_size)
     return ContextPack(
         path=pack_path,
         metadata=metadata,
         request_files=request,
         discovery_handoff=handoff,
+        discovery_origin=origin,
         children=children,
     )
 
@@ -329,6 +356,15 @@ def validate_pack(
             errors.append("request/ directory is empty (at least one file required)")
 
     if require_discovery:
+        origin_path = pack_path / "config" / "discovery-origin.yaml"
+        if not origin_path.exists():
+            errors.append("config/discovery-origin.yaml is missing (required)")
+        else:
+            try:
+                load_discovery_origin(pack_path)
+            except ConfigurationError as exc:
+                errors.append(str(exc))
+
         handoff_path = pack_path / "discovery" / "handoff-context.json"
         if not handoff_path.exists():
             errors.append("discovery/handoff-context.json is missing (required)")
@@ -416,67 +452,7 @@ def create_pack_skeleton(
 
 
 # ------------------------------------------------------------------
-# 13. create_composite_pack
-# ------------------------------------------------------------------
-
-
-def create_composite_pack(
-    state_directory: str | Path,
-    context_id: str,
-    child_ids: list[str],
-    *,
-    label: str | None = None,
-    max_composition_size: int = 5,
-) -> Path:
-    """Create a composite context pack referencing existing child packs.
-
-    Validates that all children exist and are finalized, that there are no
-    duplicate IDs, and that the count does not exceed *max_composition_size*.
-    A synthetic ``request/composition.md`` is generated describing the children.
-
-    Returns the pack directory path.  The pack is created with
-    ``finalized=False``; callers must explicitly finalize it later.
-    """
-    state_directory = Path(state_directory)
-
-    metadata = ContextMetadata(
-        context_id=context_id,
-        created_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        composition=[CompositionEntry(context_id=cid) for cid in child_ids],
-        finalized=False,
-        label=label,
-    )
-    errors = validate_composition(metadata, max_composition_size)
-    if errors:
-        raise ConfigurationError("Composition validation failed: " + "; ".join(errors))
-
-    for cid in child_ids:
-        child_path = state_directory / "contexts" / cid
-        if not child_path.is_dir():
-            raise ConfigurationError(f"Child context pack {cid!r} not found at {child_path}")
-        child_meta = load_context_metadata(child_path)
-        if not child_meta.finalized:
-            raise ConfigurationError(f"Child context pack {cid!r} is not finalized")
-
-    lines = ["# Composite Context Pack\n"]
-    if label:
-        lines.append(f"**Label:** {label}\n")
-    lines.append(f"\nComposed from {len(child_ids)} child pack(s):\n")
-    for cid in child_ids:
-        child_path = state_directory / "contexts" / cid
-        child_meta = load_context_metadata(child_path)
-        child_label = child_meta.label or "(no label)"
-        lines.append(f"- `{cid}` — {child_label}")
-
-    request_files = {"composition.md": "\n".join(lines) + "\n"}
-
-    return create_pack_skeleton(
-        state_directory, context_id, metadata, request_files, config_snapshot={}
-    )
-
-
-# ------------------------------------------------------------------
-# 14. load_snapshotted_root_config
+# 13. load_snapshotted_root_config
 # ------------------------------------------------------------------
 
 

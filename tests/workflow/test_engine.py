@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from conftest import MinimalReviewer, MinimalWorker, make_simple_graph
-from pawc_kit.contracts.errors import TransitionError
+from pawc_kit.contracts.errors import ConfigurationError, TransitionError
 from pawc_kit.contracts.events import (
     IterationCommitted,
     PhaseStarted,
@@ -605,3 +605,28 @@ def test_engine_no_usage_leaves_token_fields_none() -> None:
 
     run_events = [e for e in obs.events if isinstance(e, RunCompleted)]
     assert run_events[0].total_tokens == 0
+
+
+# ---------------------------------------------------------------------------
+# Discovery graph gate
+# ---------------------------------------------------------------------------
+
+
+def test_sync_engine_rejects_discovery_graph() -> None:
+    """WorkflowEngine must raise ConfigurationError for discovery graphs."""
+    from pawc_kit.contracts.discovery import DiscoveryConfig, DiscoveryPhaseConfig
+
+    config = DiscoveryConfig(
+        phases=[
+            DiscoveryPhaseConfig(phase="research", on_complete="finalize"),
+            DiscoveryPhaseConfig(phase="finalize"),
+        ],
+        require_human_approval=False,
+    )
+    graph = PhaseGraph.from_discovery_config(config)
+    assert graph.discovery is True
+
+    ss = MemoryStateStore()
+    arts = MemoryArtifactStore()
+    with pytest.raises(ConfigurationError, match="Discovery workflows require AsyncWorkflowEngine"):
+        WorkflowEngine(graph=graph, state_store=ss, artifact_store=arts)

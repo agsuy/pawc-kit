@@ -19,7 +19,7 @@ from pawc_kit.ports.runtime import (
     AsyncResolvedBackend,
     ResolvedBackend,
 )
-from pawc_kit.ports.state import SessionMetadata, StoredSession
+from pawc_kit.ports.state import SessionMetadata, SessionSummary, StoredSession
 from pawc_kit.session import WorkflowSession
 from pawc_kit.workflow.roles import ExecutionResult
 
@@ -69,6 +69,23 @@ class _InMemoryStateStore:
     def list(self) -> list[StoredSession]:
         return [
             StoredSession(state=s, revision=self._revisions[sid]) for sid, s in self._states.items()
+        ]
+
+    def list_sessions(self) -> list[SessionSummary]:
+        return [
+            SessionSummary(
+                session_id=s.session_id,
+                skill_name=s.skill_name,
+                skill_version=s.skill_version,
+                current_phase=s.current_phase,
+                status=s.status,
+                started_at=s.started_at,
+                completed_at=s.completed_at,
+                context_id=s.context_id,
+                feedback_loops=s.feedback_loops,
+                revision=self._revisions[sid],
+            )
+            for sid, s in self._states.items()
         ]
 
     def delete(self, session_id: str) -> None:
@@ -167,6 +184,9 @@ class _SpyAsyncRuntimeBackend:
 
             async def list(self) -> list[StoredSession]:
                 return self._inner.list()
+
+            async def list_sessions(self) -> list[SessionSummary]:
+                return self._inner.list_sessions()
 
             async def delete(self, session_id: str) -> None:
                 self._inner.delete(session_id)

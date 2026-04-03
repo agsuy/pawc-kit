@@ -5,10 +5,12 @@ from __future__ import annotations
 import pytest
 
 from pawc_kit.contracts.config import EfficiencyConfig, RoleConfig
+from pawc_kit.contracts.errors import ConfigurationError
 from pawc_kit.contracts.execution import ContextPayload, ExecutionRequest
 from pawc_kit.contracts.state import IterationEntry, ReviewEntry
 from pawc_kit.llm.prompts import (
     DefaultPromptAssembler,
+    _to_toon,
     abbreviated_schema,
     context_section,
     role_section,
@@ -97,6 +99,56 @@ def test_context_section_jsonl_verbosity() -> None:
     eff = EfficiencyConfig(prompt_verbosity="jsonl", phase_filter=False)
     section = context_section(ctx, eff)
     assert "Iterations" in section
+
+
+def test_compact_without_toon_raises_configuration_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import builtins
+
+    real_import = builtins.__import__
+
+    def guarded_import(
+        name: str,
+        globals: dict | None = None,
+        locals: dict | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ):
+        if level == 0 and name == "toon":
+            raise ImportError("No module named 'toon'")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        _to_toon([{"a": 1}])
+    msg = str(exc_info.value).lower()
+    assert "compact" in msg
+    assert "toon" in msg
+    assert "[toon]" in str(exc_info.value)
+
+
+def test_context_section_compact_verbosity_encodes_iterations() -> None:
+    iteration = IterationEntry(
+        iteration=1,
+        phase_id="work",
+        role_id="worker",
+        confidence_score=75,
+        ended_at="2026-01-01T00:00:00Z",
+        summary="x",
+    )
+    ctx = ExecutionRequest(
+        session=make_session(),
+        phase=PhaseDefinition(phase_id="work", role_id="worker-role", kind="executor"),
+        history=WorkflowHistoryView(iterations=[iteration], reviews=[]),
+        context=ContextPayload.empty(),
+    )
+    eff = EfficiencyConfig(prompt_verbosity="compact", phase_filter=False)
+    section = context_section(ctx, eff)
+    assert "Session:" in section
+    assert "work" in section
+    assert "x" in section or "worker" in section
 
 
 def test_context_section_phase_filter_excludes_unrelated() -> None:
@@ -360,12 +412,36 @@ def test_reviewer_prompts_no_quality_gates_no_mention() -> None:
     assert "Quality Gates" not in system
 
 
-def test_reviewer_prompts_finding_categories_in_system() -> None:
+@pytest.mark.parametrize(
+    "role_config",
+    [None, RoleConfig.model_validate({"name": "Reviewer", "version": "1.0.0"})],
+)
+def test_reviewer_prompts_finding_categories_in_system(
+    role_config: RoleConfig | None,
+) -> None:
     ctx = make_review_ctx()
     cats = ["correctness", "security"]
-    system, _ = DefaultPromptAssembler().reviewer_prompts(ctx, finding_categories=cats)
+    system, _ = DefaultPromptAssembler().reviewer_prompts(ctx, role_config, finding_categories=cats)
     assert "Finding categories" in system
     assert "correctness" in system and "security" in system
+
+
+def test_reviewer_prompts_role_extra_suppresses_invoker_finding_categories_line() -> None:
+    ctx = make_review_ctx()
+    cfg = RoleConfig.model_validate(
+        {
+            "name": "Reviewer",
+            "version": "1.0.0",
+            "finding_categories": ["security", "ux"],
+        }
+    )
+    system, _ = DefaultPromptAssembler().reviewer_prompts(
+        ctx, cfg, finding_categories=["template_only"]
+    )
+    assert "Allowed finding categories:" in system
+    assert "- security" in system and "- ux" in system
+    assert "Finding categories (use only these category names" not in system
+    assert "template_only" not in system
 
 
 def test_reviewer_prompts_no_finding_categories_unchanged() -> None:

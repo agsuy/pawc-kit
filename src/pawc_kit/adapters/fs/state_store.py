@@ -9,7 +9,7 @@ from pawc_kit._time import utc_now
 from pawc_kit.adapters.fs._io import atomic_write
 from pawc_kit.contracts.errors import ConcurrencyError, StateError, StateNotFoundError
 from pawc_kit.contracts.state import SessionState
-from pawc_kit.ports.state import SessionMetadata, StoredSession
+from pawc_kit.ports.state import SessionMetadata, SessionSummary, StoredSession
 
 
 class FsStateStore:
@@ -80,6 +80,27 @@ class FsStateStore:
         state = SessionState.model_validate_json(self._state_path.read_text(encoding="utf-8"))
         return [StoredSession(state=state, revision=self._read_revision())]
 
+    def list_sessions(self) -> list[SessionSummary]:
+        if not self._state_path.exists():
+            return []
+        import json
+
+        raw = json.loads(self._state_path.read_text(encoding="utf-8"))
+        return [
+            SessionSummary(
+                session_id=raw["session_id"],
+                skill_name=raw["skill_name"],
+                skill_version=raw["skill_version"],
+                current_phase=raw["current_phase"],
+                status=raw.get("status", "initialized"),
+                started_at=raw["started_at"],
+                completed_at=raw.get("completed_at"),
+                context_id=raw.get("context_id"),
+                feedback_loops=raw.get("feedback_loops", 0),
+                revision=self._read_revision(),
+            )
+        ]
+
     def delete(self, session_id: str) -> None:
         if not self._state_path.exists():
             return
@@ -126,6 +147,9 @@ class AsyncFsStateStore:
 
     async def list(self) -> list[StoredSession]:
         return await asyncio.to_thread(self._store.list)
+
+    async def list_sessions(self) -> list[SessionSummary]:
+        return await asyncio.to_thread(self._store.list_sessions)
 
     async def delete(self, session_id: str) -> None:
         await asyncio.to_thread(self._store.delete, session_id)

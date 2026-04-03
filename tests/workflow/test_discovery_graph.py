@@ -55,6 +55,18 @@ def test_default_graph_builds_successfully() -> None:
     ]
 
 
+def test_discovery_graph_has_discovery_flag() -> None:
+    graph = PhaseGraph.from_discovery_config(_config())
+    assert graph.discovery is True
+
+
+def test_execution_graph_has_no_discovery_flag() -> None:
+    from pawc_kit.workflow.graph import PhaseDefinition
+
+    graph = PhaseGraph([PhaseDefinition(phase_id="work", role_id="w", kind="executor")])
+    assert graph.discovery is False
+
+
 def test_default_graph_phase_kinds() -> None:
     graph = PhaseGraph.from_discovery_config(_config())
     assert graph.phase_kind("research") == "executor"

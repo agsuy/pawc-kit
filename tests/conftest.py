@@ -159,9 +159,9 @@ def build_context_pack(
 
     ctx: dict[str, Any] = {
         "context_id": context_id,
+        "family_id": context_id,
+        "version_seq": 1,
         "created_at": "2026-01-01T00:00:00Z",
-        "parent_context_id": None,
-        "parent_context_version": None,
         "composition": [{"context_id": c} for c in (composition or [])],
     }
     if finalized is not None:
@@ -185,6 +185,10 @@ def build_context_pack(
     if with_discovery:
         disc_dir = pack_dir / "discovery"
         disc_dir.mkdir(exist_ok=True)
+        (config_dir / "discovery-origin.yaml").write_text(
+            "template_name: discovery-template\nprovider_id: openai\nmodel_id: gpt-4.1-mini\n",
+            encoding="utf-8",
+        )
         envelope = {
             "metadata": {"phase_id": "discovery", "role_id": "discovery"},
             "parts": [
