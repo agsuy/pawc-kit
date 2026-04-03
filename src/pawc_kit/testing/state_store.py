@@ -127,9 +127,7 @@ class StateStoreConformance:
 
     def test_list_sessions_reflects_saves(self, store: object) -> None:
         initial = store.initialize(_metadata())  # type: ignore[union-attr]
-        updated = initial.state.model_copy(
-            update={"status": "in_progress", "feedback_loops": 3}
-        )
+        updated = initial.state.model_copy(update={"status": "in_progress", "feedback_loops": 3})
         store.save(updated, expected_revision=initial.revision)  # type: ignore[union-attr]
         summaries = store.list_sessions()  # type: ignore[union-attr]
         assert summaries[0].status == "in_progress"
