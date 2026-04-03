@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 
-from pawc_kit.contracts.artifacts import FileArtifact
+from pawc_kit.contracts.artifacts import FileArtifact, HandoffContext, KeyArtifactRef
 from pawc_kit.contracts.context import ContextMetadata
 from pawc_kit.contracts.discovery import QuestionEntry, QuestionRequest
 from pawc_kit.contracts.events import HumanReviewPending
@@ -126,9 +126,18 @@ def _graph_with_human_review() -> PhaseGraph:
 class FixedExecutor:
     """Executor that returns a fixed result."""
 
-    def __init__(self, confidence: int = 90, pending_question: QuestionRequest | None = None):
+    def __init__(
+        self,
+        confidence: int = 90,
+        pending_question: QuestionRequest | None = None,
+        *,
+        files: list[FileArtifact] | None = None,
+        handoff: HandoffContext | None = None,
+    ):
         self._confidence = confidence
         self._pq = pending_question
+        self._files = files or []
+        self._handoff = handoff
 
     async def execute(self, req):
         return ExecutionResult(
@@ -137,6 +146,9 @@ class FixedExecutor:
             confidence_score=self._confidence,
             summary="done",
             pending_question=self._pq,
+            artifacts=[f.to_artifact_ref() for f in self._files],
+            files=self._files,
+            handoff=self._handoff,
         )
 
 
@@ -159,6 +171,21 @@ class FixedReviewer:
                 target_phase=self._target,
             ),
         )
+
+
+def _finalize_executor(
+    *, files: list[FileArtifact] | None = None, confidence: int = 90
+) -> FixedExecutor:
+    key_artifacts = [
+        KeyArtifactRef(type=f.type, ref=f.ref, description=f.description) for f in (files or [])
+    ]
+    handoff = HandoffContext(
+        summary="Discovery packaged for downstream use.",
+        key_artifacts=key_artifacts,
+        open_questions=[],
+        assumptions=[],
+    )
+    return FixedExecutor(confidence=confidence, files=files, handoff=handoff)
 
 
 def _build_engine(
@@ -194,7 +221,7 @@ def test_writer_finalize_called_on_completion() -> None:
     writer = MockContextPackWriter()
     engine, state_store, observer = _build_engine(_simple_graph(), writer=writer)
     engine.register_role("research", FixedExecutor())
-    engine.register_role("finalize", FixedExecutor())
+    engine.register_role("finalize", _finalize_executor())
 
     asyncio.run(
         engine.run(
@@ -214,7 +241,7 @@ def test_writer_finalize_not_called_on_abandonment() -> None:
     engine, state_store, observer = _build_engine(graph, writer=writer, confidence_threshold=50)
     engine.register_role("research", FixedExecutor(confidence=50))
     engine.register_role("review", FixedReviewer(decision="REQUEST_CHANGES", target="research"))
-    engine.register_role("finalize", FixedExecutor())
+    engine.register_role("finalize", _finalize_executor())
 
     state = asyncio.run(
         engine.run(
@@ -232,7 +259,7 @@ def test_writer_finalize_not_called_without_context_id() -> None:
     writer = MockContextPackWriter()
     engine, state_store, observer = _build_engine(_simple_graph(), writer=writer)
     engine.register_role("research", FixedExecutor())
-    engine.register_role("finalize", FixedExecutor())
+    engine.register_role("finalize", _finalize_executor())
 
     asyncio.run(
         engine.run(
@@ -270,7 +297,7 @@ def test_human_review_pauses_and_emits_event() -> None:
     engine, state_store, observer = _build_engine(_graph_with_human_review(), writer=writer)
     engine.register_role("research", FixedExecutor())
     engine.register_role("human_review", FixedReviewer())
-    engine.register_role("finalize", FixedExecutor())
+    engine.register_role("finalize", _finalize_executor())
 
     state = asyncio.run(
         engine.run(
@@ -296,7 +323,7 @@ def test_human_review_pending_review_entry_content() -> None:
     engine, state_store, observer = _build_engine(_graph_with_human_review(), writer=writer)
     engine.register_role("research", FixedExecutor())
     engine.register_role("human_review", FixedReviewer())
-    engine.register_role("finalize", FixedExecutor())
+    engine.register_role("finalize", _finalize_executor())
 
     state = asyncio.run(
         engine.run(
@@ -321,7 +348,7 @@ def test_human_review_resume_after_approve() -> None:
     engine, state_store, observer = _build_engine(_graph_with_human_review(), writer=writer)
     engine.register_role("research", FixedExecutor())
     engine.register_role("human_review", FixedReviewer())
-    engine.register_role("finalize", FixedExecutor())
+    engine.register_role("finalize", _finalize_executor())
 
     state = asyncio.run(
         engine.run(
@@ -371,7 +398,7 @@ def test_human_review_request_changes_loops_back_then_approves() -> None:
     engine, state_store, observer = _build_engine(_graph_with_human_review(), writer=writer)
     engine.register_role("research", FixedExecutor())
     engine.register_role("human_review", FixedReviewer())
-    engine.register_role("finalize", FixedExecutor())
+    engine.register_role("finalize", _finalize_executor())
 
     # Run 1: engine pauses at human_review with PENDING
     state = asyncio.run(
@@ -497,7 +524,7 @@ def test_executor_files_written_to_writer() -> None:
         ),
     ]
     engine.register_role("research", FileExecutor(files=artifacts))
-    engine.register_role("finalize", FileExecutor())
+    engine.register_role("finalize", _finalize_executor())
 
     asyncio.run(
         engine.run(
@@ -508,17 +535,18 @@ def test_executor_files_written_to_writer() -> None:
         )
     )
 
-    assert len(writer.files_written) == 2
+    assert len(writer.files_written) == 3
     assert writer.files_written[0] == ("ctx-1", "discovery/summary.md", "# Summary\n")
     assert writer.files_written[1] == ("ctx-1", "discovery/glossary.md", "# Glossary\n")
+    assert writer.files_written[2][1] == "discovery/handoff-context.json"
 
 
 def test_executor_empty_files_no_write_calls() -> None:
-    """Engine makes no write_discovery_file calls when result.files is empty."""
+    """Engine writes only the canonical handoff when there are no FileArtifact outputs."""
     writer = MockContextPackWriter()
     engine, _, _ = _build_engine(_simple_graph(), writer=writer)
     engine.register_role("research", FixedExecutor())
-    engine.register_role("finalize", FixedExecutor())
+    engine.register_role("finalize", _finalize_executor())
 
     asyncio.run(
         engine.run(
@@ -529,7 +557,8 @@ def test_executor_empty_files_no_write_calls() -> None:
         )
     )
 
-    assert writer.files_written == []
+    assert len(writer.files_written) == 1
+    assert writer.files_written[0][1] == "discovery/handoff-context.json"
 
 
 def test_files_not_written_without_context_id() -> None:
@@ -560,7 +589,7 @@ def test_finalize_passes_lock_true_on_completion() -> None:
     writer = MockContextPackWriter()
     engine, _, _ = _build_engine(_simple_graph(), writer=writer)
     engine.register_role("research", FixedExecutor())
-    engine.register_role("finalize", FixedExecutor())
+    engine.register_role("finalize", _finalize_executor())
 
     asyncio.run(
         engine.run(
@@ -591,7 +620,7 @@ def test_artifacts_in_state_have_no_content() -> None:
         ),
     ]
     engine.register_role("research", FileExecutor(files=artifacts))
-    engine.register_role("finalize", FileExecutor())
+    engine.register_role("finalize", _finalize_executor())
 
     asyncio.run(
         engine.run(

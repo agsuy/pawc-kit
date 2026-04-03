@@ -62,13 +62,24 @@ class PhaseDefinition:
 class PhaseGraph:
     """Validated workflow graph for sync and async engines."""
 
-    def __init__(self, phases: list[PhaseDefinition]) -> None:
+    def __init__(
+        self,
+        phases: list[PhaseDefinition],
+        *,
+        discovery: bool = False,
+    ) -> None:
         errors = self._validate(phases)
         if errors:
             raise ValueError("Invalid phase graph: " + "; ".join(errors))
         self._phases = list(phases)
         self._phase_ids = [phase.phase_id for phase in self._phases]
         self._by_id = {phase.phase_id: phase for phase in self._phases}
+        self._discovery = discovery
+
+    @property
+    def discovery(self) -> bool:
+        """Whether this graph was built from a discovery config."""
+        return self._discovery
 
     @property
     def phase_ids(self) -> list[str]:
@@ -229,7 +240,7 @@ class PhaseGraph:
             pass  # target resolution checked by PhaseGraph._validate
 
         try:
-            return PhaseGraph(definitions)
+            return PhaseGraph(definitions, discovery=True)
         except ValueError as exc:
             raise ConfigurationError(f"Invalid discovery phases: {exc}") from exc
 
