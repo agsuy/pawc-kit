@@ -9,6 +9,7 @@ from pawc_kit.contracts.context import (
     AgentUsedEntry,
     CompositionEntry,
     ContextMetadata,
+    DiscoveryOrigin,
     ModelUsedEntry,
 )
 
@@ -76,9 +77,13 @@ def test_model_used_entry_with_version() -> None:
 def test_context_metadata_minimal_valid() -> None:
     meta = ContextMetadata(
         context_id="ctx-1",
+        family_id="ctx-1",
+        version_seq=1,
         created_at="2026-01-01T00:00:00Z",
     )
     assert meta.context_id == "ctx-1"
+    assert meta.family_id == "ctx-1"
+    assert meta.version_seq == 1
     assert meta.finalized is None
     assert meta.composition == []
 
@@ -86,6 +91,8 @@ def test_context_metadata_minimal_valid() -> None:
 def test_context_metadata_with_composition() -> None:
     meta = ContextMetadata(
         context_id="ctx-1",
+        family_id="family-1",
+        version_seq=2,
         created_at="2026-01-01T00:00:00Z",
         composition=[CompositionEntry(context_id="ctx-child")],
     )
@@ -94,8 +101,19 @@ def test_context_metadata_with_composition() -> None:
 
 
 def test_context_metadata_finalized_false_vs_none() -> None:
-    meta_none = ContextMetadata(context_id="c", created_at="2026-01-01T00:00:00Z")
-    meta_false = ContextMetadata(context_id="c", created_at="2026-01-01T00:00:00Z", finalized=False)
+    meta_none = ContextMetadata(
+        context_id="c",
+        family_id="c",
+        version_seq=1,
+        created_at="2026-01-01T00:00:00Z",
+    )
+    meta_false = ContextMetadata(
+        context_id="c",
+        family_id="c",
+        version_seq=1,
+        created_at="2026-01-01T00:00:00Z",
+        finalized=False,
+    )
     assert meta_none.finalized is None
     assert meta_false.finalized is False
 
@@ -103,6 +121,8 @@ def test_context_metadata_finalized_false_vs_none() -> None:
 def test_context_metadata_with_agents_and_models() -> None:
     meta = ContextMetadata(
         context_id="ctx-1",
+        family_id="ctx-1",
+        version_seq=1,
         created_at="2026-01-01T00:00:00Z",
         agents_used=[AgentUsedEntry(agent_id="worker-agent")],
         models_used=[ModelUsedEntry(model_id="gpt-4")],
@@ -111,3 +131,18 @@ def test_context_metadata_with_agents_and_models() -> None:
     assert len(meta.agents_used) == 1
     assert meta.models_used is not None
     assert len(meta.models_used) == 1
+
+
+def test_context_metadata_defaults_family_from_context_id() -> None:
+    meta = ContextMetadata(context_id="ctx-7", created_at="2026-01-01T00:00:00Z")
+    assert meta.family_id == "ctx-7"
+    assert meta.version_seq == 1
+
+
+def test_discovery_origin_valid() -> None:
+    origin = DiscoveryOrigin(
+        template_name="discovery-no-human",
+        provider_id="openai",
+        model_id="gpt-4.1-mini",
+    )
+    assert origin.template_name == "discovery-no-human"
