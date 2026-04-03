@@ -2,6 +2,57 @@
 
 <!-- version list -->
 
+## v0.6.0 (2026-04-03)
+
+### Chores
+
+- **deps**: Move toon-formatter to optional extra ([#6](https://github.com/agsuy/pawc-kit/pull/6),
+  [`5e142f6`](https://github.com/agsuy/pawc-kit/commit/5e142f6cd28e70f883057cd6c1734fccc00836d0))
+
+### Code Style
+
+- Ruff format context, ports, and testing harness ([#6](https://github.com/agsuy/pawc-kit/pull/6),
+  [`5e142f6`](https://github.com/agsuy/pawc-kit/commit/5e142f6cd28e70f883057cd6c1734fccc00836d0))
+
+### Features
+
+- Discovery provenance, session summaries, store conformance harness
+  ([#6](https://github.com/agsuy/pawc-kit/pull/6),
+  [`5e142f6`](https://github.com/agsuy/pawc-kit/commit/5e142f6cd28e70f883057cd6c1734fccc00836d0))
+
+- **contracts**: Add DiscoveryOrigin and context metadata versioning
+  ([#6](https://github.com/agsuy/pawc-kit/pull/6),
+  [`5e142f6`](https://github.com/agsuy/pawc-kit/commit/5e142f6cd28e70f883057cd6c1734fccc00836d0))
+
+- **llm**: Wire discovery file refs into prompts and roles
+  ([#6](https://github.com/agsuy/pawc-kit/pull/6),
+  [`5e142f6`](https://github.com/agsuy/pawc-kit/commit/5e142f6cd28e70f883057cd6c1734fccc00836d0))
+
+- **state**: Add SessionSummary and list_sessions to state stores
+  ([#6](https://github.com/agsuy/pawc-kit/pull/6),
+  [`5e142f6`](https://github.com/agsuy/pawc-kit/commit/5e142f6cd28e70f883057cd6c1734fccc00836d0))
+
+- **testing**: Add StateStore and ArtifactStore conformance harnesses
+  ([#6](https://github.com/agsuy/pawc-kit/pull/6),
+  [`5e142f6`](https://github.com/agsuy/pawc-kit/commit/5e142f6cd28e70f883057cd6c1734fccc00836d0))
+
+- **workflow**: Mark discovery graphs and persist finalize handoff
+  ([#6](https://github.com/agsuy/pawc-kit/pull/6),
+  [`5e142f6`](https://github.com/agsuy/pawc-kit/commit/5e142f6cd28e70f883057cd6c1734fccc00836d0))
+
+### Refactoring
+
+- **context**: Split implementation into package layout
+  ([#6](https://github.com/agsuy/pawc-kit/pull/6),
+  [`5e142f6`](https://github.com/agsuy/pawc-kit/commit/5e142f6cd28e70f883057cd6c1734fccc00836d0))
+
+### Testing
+
+- **discovery**: Expand e2e coverage and document context model
+  ([#6](https://github.com/agsuy/pawc-kit/pull/6),
+  [`5e142f6`](https://github.com/agsuy/pawc-kit/commit/5e142f6cd28e70f883057cd6c1734fccc00836d0))
+
+
 ## v0.5.0 (2026-03-26)
 
 ### Bug Fixes
