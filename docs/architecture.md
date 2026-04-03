@@ -2,7 +2,7 @@
 
 This document describes how the **pawc-kit** Python library is layered and how execution, discovery, and configuration fit together. For field-by-field YAML reference, see [workflow-config-reference.md](workflow-config-reference.md). For HTTP services and transport, see the **pawc-server** repository.
 
-Last updated: 2026-03-26
+Last updated: 2026-03-31
 
 ---
 
@@ -89,6 +89,79 @@ The same **engine** can run either graph shape once the `PhaseGraph` is built; t
 - **Async:** `AsyncWorkflowEngine`, `AsyncWorkflowSession`, `AsyncFsStateStore`, `AsyncLLMBackend`, `AsyncStructuredOutput`.
 
 Use async when integrating with asyncio runtimes (for example Starlette/FastAPI or async state stores).
+
+---
+
+## Context-pack contract
+
+`pawc-kit` owns the portable context-pack contract. A native pack remains a
+directory tree rooted at `contexts/<context_id>/...`, but V1 now treats pack
+version identity as part of the portable metadata rather than as server-only
+state.
+
+### Portable metadata
+
+`context.json` is modeled by `ContextMetadata` and should carry:
+
+- `context_id` — immutable unique artifact id
+- `created_at`
+- `finalized`
+- `session_id`
+- `discovery_approved`
+- `family_id` — stable family/group identifier
+- `version_seq` — monotonically increasing version number within the family
+- `derived_from_context_id` — optional source/base version chosen for this
+  build
+- `version_note` — optional human note for this specific version
+- `composition[]` — exact child dependency snapshot for composites
+
+The older ad hoc lineage/display fields (`label`, `parent_context_id`,
+`parent_context_version`) are intentionally removed. They mixed unrelated
+concerns:
+
+- display naming belongs to the server/operator layer
+- parent/version lineage is not always an immediate predecessor
+- composite dependency membership is already represented by `composition[]`
+
+### Discovery rebuild provenance
+
+Discovery packs also carry a portable rebuild provenance file at
+`config/discovery-origin.yaml`. This file is part of the kit-owned native pack
+layout and contains:
+
+- `template_name`
+- `provider_id`
+- `model_id`
+
+Together with `request/prompt.md`, this gives imported packs enough immutable
+source information to support a future “create new version from this discovery
+pack” flow without relying on a local server database snapshot.
+
+### Composition vs version lineage
+
+These are separate concepts and should not be collapsed:
+
+- `composition[]` captures the exact child packs included by a composite pack
+- `derived_from_context_id` captures the source/base version chosen to create a
+  new pack version
+
+That distinction matters for flows such as “create v5 from v3 while v4 already
+exists” and for composite rebuilds where changing a leaf dependency should
+produce a new composite version without rewriting the old dependency snapshot.
+
+### Export/import expectations
+
+`pawc-kit` pack helpers should round-trip:
+
+- `context.json`
+- `request/*`
+- `config/discovery-origin.yaml` when present
+- `discovery/handoff-context.json` when present
+- all composed child packs under `contexts/<child_id>/...`
+
+Portable family display naming is deliberately out of scope for `pawc-kit`.
+That mutable presentation state belongs to the server/export manifest layer,
+not to the native pack contract.
 
 ---
 
