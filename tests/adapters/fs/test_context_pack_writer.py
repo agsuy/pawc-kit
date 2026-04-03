@@ -14,7 +14,12 @@ TS = "2026-01-01T00:00:00Z"
 
 
 def _metadata(context_id: str = "ctx-1") -> ContextMetadata:
-    return ContextMetadata(context_id=context_id, created_at=TS)
+    return ContextMetadata(
+        context_id=context_id,
+        family_id=context_id,
+        version_seq=1,
+        created_at=TS,
+    )
 
 
 def _question(qid: str = "q-1", phase: str = "research") -> QuestionEntry:
@@ -134,11 +139,11 @@ def test_update_metadata_overwrites_context_json(tmp_path: Path) -> None:
     writer = FsContextPackWriter(tmp_path)
     writer.initialize("ctx-1", _metadata(), {"p.md": "x"}, {})
     updated = _metadata()
-    updated = updated.model_copy(update={"label": "my-pack"})
+    updated = updated.model_copy(update={"version_note": "my-pack"})
     writer.update_metadata("ctx-1", updated)
     root = tmp_path / "contexts" / "ctx-1"
     meta = ContextMetadata.model_validate_json((root / "context.json").read_text(encoding="utf-8"))
-    assert meta.label == "my-pack"
+    assert meta.version_note == "my-pack"
 
 
 # ---------------------------------------------------------------------------
