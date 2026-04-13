@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from pawc_kit.contracts.events import (
+    CompressionCompleted,
     IterationCommitted,
     PhaseStarted,
     PhaseTransitioned,
@@ -133,6 +134,23 @@ class OpenTelemetryWorkflowObserver:
             "pawc.workflow.tokens.total",
             description="Total tokens consumed by LLM calls.",
         )
+        self._recovery_calls = meter.create_counter(
+            "pawc.workflow.recovery.calls",
+            description="Total LLM calls for section recovery.",
+        )
+        self._compressions = meter.create_counter(
+            "pawc.compression.invocations",
+            description="Number of compression pipeline invocations.",
+        )
+        self._compression_sections_dropped = meter.create_counter(
+            "pawc.compression.sections_dropped",
+            description="Total sections dropped by priority selection.",
+        )
+        self._compression_ratio = meter.create_histogram(
+            "pawc.compression.ratio",
+            description="Compression ratio (original / final chars).",
+            unit="1",
+        )
 
     def _ensure_active(self, session_id: str) -> _ActiveSpans:
         if session_id not in self._active_spans:
@@ -218,6 +236,14 @@ class OpenTelemetryWorkflowObserver:
             span.set_attribute("total_tokens", event.total_tokens)
             if event.model:
                 span.set_attribute("model", event.model)
+        if event.recovery_total_calls > 0:
+            span.set_attribute("recovery.sections_requested", event.recovery_sections_requested)
+            span.set_attribute("recovery.sections_recovered", event.recovery_sections_recovered)
+            span.set_attribute("recovery.batch_attempted", event.recovery_batch_attempted)
+            span.set_attribute("recovery.batch_parsed", event.recovery_batch_parsed)
+            span.set_attribute("recovery.individual_calls", event.recovery_individual_calls)
+            span.set_attribute("recovery.total_calls", event.recovery_total_calls)
+            span.set_attribute("recovery.section_names", event.recovery_section_names)
         span.end(end_time=end_ns)
 
     def _trace_review_committed(self, event: ReviewCommitted) -> None:
@@ -252,6 +278,14 @@ class OpenTelemetryWorkflowObserver:
             span.set_attribute("total_tokens", event.total_tokens)
             if event.model:
                 span.set_attribute("model", event.model)
+        if event.recovery_total_calls > 0:
+            span.set_attribute("recovery.sections_requested", event.recovery_sections_requested)
+            span.set_attribute("recovery.sections_recovered", event.recovery_sections_recovered)
+            span.set_attribute("recovery.batch_attempted", event.recovery_batch_attempted)
+            span.set_attribute("recovery.batch_parsed", event.recovery_batch_parsed)
+            span.set_attribute("recovery.individual_calls", event.recovery_individual_calls)
+            span.set_attribute("recovery.total_calls", event.recovery_total_calls)
+            span.set_attribute("recovery.section_names", event.recovery_section_names)
         span.end(end_time=end_ns)
 
     def _trace_phase_transitioned(self, event: PhaseTransitioned) -> None:
@@ -318,6 +352,11 @@ class OpenTelemetryWorkflowObserver:
                 self._prompt_tokens.add(event.prompt_tokens or 0, attrs)
                 self._completion_tokens.add(event.completion_tokens or 0, attrs)
                 self._total_tokens.add(event.total_tokens, attrs)
+            if event.recovery_total_calls > 0:
+                self._recovery_calls.add(
+                    event.recovery_total_calls,
+                    {"phase_id": event.phase_id},
+                )
             self._trace_iteration_committed(event)
         elif isinstance(event, ReviewCommitted):
             self._reviews.add(
@@ -333,6 +372,11 @@ class OpenTelemetryWorkflowObserver:
                 self._prompt_tokens.add(event.prompt_tokens or 0, attrs)
                 self._completion_tokens.add(event.completion_tokens or 0, attrs)
                 self._total_tokens.add(event.total_tokens, attrs)
+            if event.recovery_total_calls > 0:
+                self._recovery_calls.add(
+                    event.recovery_total_calls,
+                    {"phase_id": event.phase_id},
+                )
             self._trace_review_committed(event)
         elif isinstance(event, PhaseTransitioned):
             self._transitions.add(
@@ -350,6 +394,45 @@ class OpenTelemetryWorkflowObserver:
         elif isinstance(event, RunFailed):
             self._failures.add(1, {"phase_id": event.phase_id or "unknown"})
             self._trace_run_failed(event)
+        elif isinstance(event, CompressionCompleted):
+            attrs = {
+                "phase_id": event.phase_id,
+                "strategy": event.strategy,
+                "overflow": event.overflow,
+                "filename": event.filename,
+            }
+            self._compressions.add(1, attrs)
+            if event.sections_dropped > 0:
+                self._compression_sections_dropped.add(event.sections_dropped, attrs)
+            if event.final_chars > 0:
+                self._compression_ratio.record(
+                    event.original_chars / event.final_chars, attrs
+                )
+            self._trace_compression_completed(event)
+
+
+    def _trace_compression_completed(self, event: CompressionCompleted) -> None:
+        active = self._active_spans.get(event.session_id)
+        if active is None or active.phase_span is None:
+            return
+        span = active.phase_span
+        span.add_event(
+            "compression",
+            attributes={
+                "compression.filename": event.filename,
+                "compression.strategy": event.strategy,
+                "compression.overflow": event.overflow,
+                "compression.pipeline_layers": list(event.pipeline_layers),
+                "compression.original_chars": event.original_chars,
+                "compression.final_chars": event.final_chars,
+                "compression.sections_total": event.sections_total,
+                "compression.sections_selected": event.sections_selected,
+                "compression.sections_dropped": event.sections_dropped,
+                "compression.exceeded_budget": event.exceeded_budget,
+                **({"compression.quality_batches": event.quality_batches}
+                   if event.quality_batches is not None else {}),
+            },
+        )
 
 
 class AsyncOpenTelemetryWorkflowObserver:

@@ -9,6 +9,7 @@ import pytest
 
 from pawc_kit.adapters.logging import AsyncLoggingWorkflowObserver, LoggingWorkflowObserver
 from pawc_kit.contracts.events import (
+    CompressionCompleted,
     IterationCommitted,
     PhaseStarted,
     PhaseTransitioned,
@@ -197,3 +198,72 @@ def test_async_logging_observer_level_parity(
     with caplog.at_level(logging.DEBUG, logger="pawc_kit.workflow"):
         asyncio.run(obs.on_event(event))  # type: ignore[arg-type]
     assert any(r.levelno == expected_level for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# CompressionCompleted event
+# ---------------------------------------------------------------------------
+
+
+def _compression_completed() -> CompressionCompleted:
+    return CompressionCompleted(
+        session_id="s1",
+        phase_id="research",
+        filename="spec.md",
+        strategy="balanced",
+        overflow="economy",
+        pipeline_layers=("lossless", "data_format", "priority_selection", "lossless_cleanup"),
+        original_chars=200000,
+        final_chars=49000,
+        sections_total=45,
+        sections_selected=33,
+        sections_dropped=12,
+        exceeded_budget=False,
+        occurred_at=TS,
+    )
+
+
+def test_compression_completed_logs_message(caplog: pytest.LogCaptureFixture) -> None:
+    obs = LoggingWorkflowObserver()
+    with caplog.at_level(logging.DEBUG, logger="pawc_kit.workflow"):
+        obs.on_event(_compression_completed())
+    assert len(caplog.records) >= 1
+    msg = caplog.records[-1].getMessage()
+    assert "spec.md" in msg
+    assert "200000" in msg
+    assert "49000" in msg
+    assert "12/45" in msg
+
+
+def test_compression_completed_extras(caplog: pytest.LogCaptureFixture) -> None:
+    obs = LoggingWorkflowObserver()
+    with caplog.at_level(logging.DEBUG, logger="pawc_kit.workflow"):
+        obs.on_event(_compression_completed())
+    record = caplog.records[-1]
+    assert record.pawc_event == "CompressionCompleted"  # type: ignore[attr-defined]
+    assert record.pawc_strategy == "balanced"  # type: ignore[attr-defined]
+
+
+def test_compression_completed_quality_mode_message(caplog: pytest.LogCaptureFixture) -> None:
+    event = CompressionCompleted(
+        session_id="s1",
+        phase_id="research",
+        filename="spec.md",
+        strategy="balanced",
+        overflow="quality",
+        pipeline_layers=("lossless", "priority_selection"),
+        original_chars=200000,
+        final_chars=55000,
+        sections_total=45,
+        sections_selected=45,
+        sections_dropped=0,
+        exceeded_budget=True,
+        occurred_at=TS,
+        quality_batches=3,
+    )
+    obs = LoggingWorkflowObserver()
+    with caplog.at_level(logging.DEBUG, logger="pawc_kit.workflow"):
+        obs.on_event(event)
+    msg = caplog.records[-1].getMessage()
+    assert "quality" in msg
+    assert "batches=3" in msg

@@ -20,6 +20,7 @@ from pawc_kit.adapters.otel import (
     OpenTelemetryWorkflowObserver,
 )
 from pawc_kit.contracts.events import (
+    CompressionCompleted,
     IterationCommitted,
     PhaseStarted,
     PhaseTransitioned,
@@ -83,6 +84,10 @@ def _make_observer() -> tuple[
     obs._prompt_tokens = meter.create_counter("pawc.workflow.tokens.prompt")
     obs._completion_tokens = meter.create_counter("pawc.workflow.tokens.completion")
     obs._total_tokens = meter.create_counter("pawc.workflow.tokens.total")
+    obs._recovery_calls = meter.create_counter("pawc.workflow.recovery.calls")
+    obs._compressions = meter.create_counter("pawc.compression.invocations")
+    obs._compression_sections_dropped = meter.create_counter("pawc.compression.sections_dropped")
+    obs._compression_ratio = meter.create_histogram("pawc.compression.ratio")
     obs._tracer = tracer_provider.get_tracer("pawc_kit.workflow")
     obs._active_spans = {}
     return obs, reader, span_exporter
@@ -713,3 +718,186 @@ def test_iteration_without_tokens_does_not_record_counters() -> None:
     )
     metrics = _collect(reader)
     assert "pawc.workflow.tokens.total" not in metrics
+
+
+# ---------------------------------------------------------------------------
+# Recovery metadata tests
+# ---------------------------------------------------------------------------
+
+
+def test_iteration_committed_recovery_span_attrs() -> None:
+    obs, reader, exporter = _make_observer()
+    obs.on_event(_run_started())
+    obs.on_event(_phase_started())
+    obs.on_event(
+        IterationCommitted(
+            session_id="s1",
+            phase_id="work",
+            role_id="worker",
+            iteration=1,
+            confidence_score=85,
+            feedback_loops=0,
+            revision=2,
+            started_at=TS_START,
+            ended_at=TS_END,
+            chosen_next=None,
+            handoff_context_ref=None,
+            recovery_sections_requested=2,
+            recovery_sections_recovered=2,
+            recovery_batch_attempted=True,
+            recovery_batch_parsed=2,
+            recovery_individual_calls=0,
+            recovery_total_calls=1,
+            recovery_section_names="SUMMARY,HANDOFF",
+        )
+    )
+    spans = _finished(exporter)
+    iteration_spans = [s for s in spans if s.name == "pawc.workflow.iteration"]
+    assert len(iteration_spans) == 1
+    attrs = dict(iteration_spans[0].attributes)
+    assert attrs["recovery.sections_requested"] == 2
+    assert attrs["recovery.sections_recovered"] == 2
+    assert attrs["recovery.batch_attempted"] is True
+    assert attrs["recovery.batch_parsed"] == 2
+    assert attrs["recovery.total_calls"] == 1
+    assert attrs["recovery.section_names"] == "SUMMARY,HANDOFF"
+
+
+def test_review_committed_recovery_counter() -> None:
+    obs, reader, _ = _make_observer()
+    obs.on_event(_run_started())
+    obs.on_event(_phase_started())
+    obs.on_event(
+        ReviewCommitted(
+            session_id="s1",
+            phase_id="review",
+            role_id="reviewer",
+            review=1,
+            decision="APPROVE",  # type: ignore[arg-type]
+            confidence_score=90,
+            feedback_loops=0,
+            revision=3,
+            started_at=TS_START,
+            ended_at=TS_END,
+            target_phase=None,
+            chosen_next=None,
+            findings_ref=None,
+            recovery_sections_requested=1,
+            recovery_sections_recovered=1,
+            recovery_batch_attempted=False,
+            recovery_batch_parsed=0,
+            recovery_individual_calls=1,
+            recovery_total_calls=1,
+            recovery_section_names="CONFIDENCE_SCORE",
+        )
+    )
+    metrics = _collect(reader)
+    assert "pawc.workflow.recovery.calls" in metrics
+    assert _sum_counter(metrics["pawc.workflow.recovery.calls"]) == 1
+
+
+def test_no_recovery_omits_attributes() -> None:
+    obs, reader, exporter = _make_observer()
+    obs.on_event(_run_started())
+    obs.on_event(_phase_started())
+    obs.on_event(_iteration_committed())
+    spans = _finished(exporter)
+    iteration_spans = [s for s in spans if s.name == "pawc.workflow.iteration"]
+    assert len(iteration_spans) == 1
+    attrs = dict(iteration_spans[0].attributes)
+    assert "recovery.total_calls" not in attrs
+    metrics = _collect(reader)
+    assert "pawc.workflow.recovery.calls" not in metrics
+
+
+# ---------------------------------------------------------------------------
+# CompressionCompleted metrics and span event
+# ---------------------------------------------------------------------------
+
+
+def _compression_completed(
+    *,
+    sections_dropped: int = 12,
+    quality_batches: int | None = None,
+) -> CompressionCompleted:
+    return CompressionCompleted(
+        session_id="s1",
+        phase_id="research",
+        filename="spec.md",
+        strategy="balanced",
+        overflow="economy",
+        pipeline_layers=("lossless", "data_format", "priority_selection", "lossless_cleanup"),
+        original_chars=200000,
+        final_chars=49000,
+        sections_total=45,
+        sections_selected=45 - sections_dropped,
+        sections_dropped=sections_dropped,
+        exceeded_budget=False,
+        occurred_at=TS,
+        quality_batches=quality_batches,
+    )
+
+
+def test_compression_completed_increments_invocations_counter() -> None:
+    obs, reader, _ = _make_observer()
+    obs.on_event(_compression_completed())
+    metrics = _collect(reader)
+    assert "pawc.compression.invocations" in metrics
+    assert _sum_counter(metrics["pawc.compression.invocations"]) == 1
+    attrs = _attrs(metrics["pawc.compression.invocations"])
+    assert any(
+        a.get("strategy") == "balanced" and a.get("overflow") == "economy"
+        for a in attrs
+    )
+
+
+def test_compression_completed_records_sections_dropped() -> None:
+    obs, reader, _ = _make_observer()
+    obs.on_event(_compression_completed(sections_dropped=12))
+    metrics = _collect(reader)
+    assert "pawc.compression.sections_dropped" in metrics
+    assert _sum_counter(metrics["pawc.compression.sections_dropped"]) == 12
+
+
+def test_compression_completed_no_sections_dropped_omits_counter() -> None:
+    obs, reader, _ = _make_observer()
+    obs.on_event(_compression_completed(sections_dropped=0))
+    metrics = _collect(reader)
+    assert "pawc.compression.sections_dropped" not in metrics
+
+
+def test_compression_completed_records_ratio_histogram() -> None:
+    obs, reader, _ = _make_observer()
+    obs.on_event(_compression_completed())  # 200000 / 49000 ≈ 4.08
+    metrics = _collect(reader)
+    assert "pawc.compression.ratio" in metrics
+    sums = _histogram_sums(metrics["pawc.compression.ratio"])
+    assert sums[0] == pytest.approx(200000 / 49000)
+
+
+def test_compression_completed_adds_span_event_to_active_phase() -> None:
+    obs, _, exporter = _make_observer()
+    obs.on_event(_run_started())
+    obs.on_event(_phase_started())
+    obs.on_event(_compression_completed(quality_batches=3))
+    obs.on_event(_run_completed())
+    spans = _finished(exporter)
+    phase_spans = [s for s in spans if s.name == "pawc.workflow.phase"]
+    assert len(phase_spans) == 1
+    events = phase_spans[0].events
+    assert len(events) == 1
+    assert events[0].name == "compression"
+    event_attrs = dict(events[0].attributes)
+    assert event_attrs["compression.filename"] == "spec.md"
+    assert event_attrs["compression.original_chars"] == 200000
+    assert event_attrs["compression.final_chars"] == 49000
+    assert event_attrs["compression.sections_dropped"] == 12
+    assert event_attrs["compression.quality_batches"] == 3
+
+
+def test_compression_completed_no_span_event_without_active_phase() -> None:
+    obs, _, exporter = _make_observer()
+    # No run/phase started — should not crash
+    obs.on_event(_compression_completed())
+    spans = _finished(exporter)
+    assert len(spans) == 0

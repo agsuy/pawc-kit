@@ -6,6 +6,7 @@ import logging
 from dataclasses import asdict
 
 from pawc_kit.contracts.events import (
+    CompressionCompleted,
     IterationCommitted,
     PhaseStarted,
     PhaseTransitioned,
@@ -14,6 +15,10 @@ from pawc_kit.contracts.events import (
     RunFailed,
     RunResumed,
     RunStarted,
+    ToolBudgetExhausted,
+    ToolCallExecuted,
+    ToolCallFailed,
+    ToolCallFallback,
     WorkflowEvent,
 )
 
@@ -23,6 +28,10 @@ _DEFAULT_LOGGER_NAME = "pawc_kit.workflow"
 def _event_level(event: WorkflowEvent) -> int:
     if isinstance(event, RunFailed):
         return logging.ERROR
+    if isinstance(event, (ToolCallFailed, ToolBudgetExhausted)):
+        return logging.WARNING
+    if isinstance(event, ToolCallFallback):
+        return logging.WARNING
     if isinstance(event, RunCompleted):
         return logging.INFO if event.status == "completed" else logging.WARNING
     if isinstance(event, RunStarted):
@@ -51,6 +60,21 @@ def _event_message(event: WorkflowEvent) -> str:
         return "Run completed" if event.status == "completed" else "Run abandoned"
     if isinstance(event, RunFailed):
         return "Run failed"
+    if isinstance(event, ToolCallExecuted):
+        status = "error" if event.is_error else "ok"
+        return f"Tool call {status}: {event.tool_name} ({event.integration_id}) {event.duration_ms}ms"
+    if isinstance(event, ToolCallFailed):
+        return f"Tool call failed: {event.tool_name} ({event.error_type}): {event.error}"
+    if isinstance(event, ToolCallFallback):
+        return f"Tool fallback: {event.capability} {event.from_integration} -> {event.to_integration}"
+    if isinstance(event, ToolBudgetExhausted):
+        return f"Tool budget exhausted: {event.limit_type} ({event.current_value}/{event.limit_value})"
+    if isinstance(event, CompressionCompleted):
+        ratio = f"{event.original_chars}->{event.final_chars}"
+        dropped = f"{event.sections_dropped}/{event.sections_total} dropped"
+        mode = f"overflow={event.overflow}"
+        batches = f" batches={event.quality_batches}" if event.quality_batches else ""
+        return f"Compression: {event.filename} {ratio} ({dropped}, {mode}{batches})"
     return type(event).__name__
 
 
