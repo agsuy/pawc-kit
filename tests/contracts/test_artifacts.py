@@ -12,6 +12,7 @@ from pawc_kit.contracts.artifacts import (
     HandoffArtifactMetadata,
     HandoffArtifactPart,
     HandoffContext,
+    HandoffPart,
     KeyArtifactRef,
 )
 
@@ -206,3 +207,64 @@ def test_decision_payload_json_roundtrip(approve_decision: DecisionPayload) -> N
     reloaded = DecisionPayload.model_validate_json(approve_decision.model_dump_json())
     assert reloaded.decision == approve_decision.decision
     assert reloaded.confidence_score == approve_decision.confidence_score
+
+
+# ---------------------------------------------------------------------------
+# HandoffPart
+# ---------------------------------------------------------------------------
+
+
+def test_handoff_part_defaults() -> None:
+    part = HandoffPart(part_type="prose", content="hello")
+    assert part.priority == "standard"
+    assert part.compressible is True
+    assert part.metadata is None
+
+
+def test_handoff_part_all_fields() -> None:
+    part = HandoffPart(
+        part_type="code",
+        priority="critical",
+        content="def foo(): pass",
+        compressible=False,
+        metadata={"language": "python"},
+    )
+    assert part.part_type == "code"
+    assert part.priority == "critical"
+    assert part.compressible is False
+    assert part.metadata == {"language": "python"}
+
+
+def test_handoff_part_rejects_invalid_part_type() -> None:
+    with pytest.raises(ValidationError):
+        HandoffPart(part_type="binary", content="data")  # type: ignore[arg-type]
+
+
+def test_handoff_part_rejects_invalid_priority() -> None:
+    with pytest.raises(ValidationError):
+        HandoffPart(part_type="prose", priority="urgent", content="x")  # type: ignore[arg-type]
+
+
+def test_handoff_context_with_parts() -> None:
+    parts = [
+        HandoffPart(part_type="prose", priority="critical", content="key finding"),
+        HandoffPart(part_type="code", content="def f(): pass"),
+    ]
+    hc = HandoffContext(summary="done", parts=parts)
+    assert hc.parts is not None
+    assert len(hc.parts) == 2
+    assert hc.parts[0].priority == "critical"
+
+    # Round-trip serialization
+    reloaded = HandoffContext.model_validate_json(hc.model_dump_json())
+    assert reloaded.parts is not None
+    assert len(reloaded.parts) == 2
+    assert reloaded.parts[1].part_type == "code"
+
+
+def test_handoff_context_backward_compat() -> None:
+    """No parts field still validates — backward compatible."""
+    hc = HandoffContext(summary="legacy")
+    assert hc.parts is None
+    data = hc.model_dump()
+    assert data["parts"] is None

@@ -82,7 +82,10 @@ def test_efficiency_config_defaults() -> None:
     assert cfg.schema_format == "abbreviated"
     assert cfg.max_history_entries is None
     assert cfg.phase_filter is True
-    assert cfg.output_budget is True
+    assert cfg.handoff_guidance.enabled is True
+    assert cfg.handoff_guidance.guidance_text is None
+    assert cfg.handoff_guidance.inject_budget_hint is False
+    assert cfg.handoff_guidance.downstream_budget_tokens is None
 
 
 @pytest.mark.parametrize("verbosity", ["full", "json", "jsonl", "compact"])
@@ -620,3 +623,106 @@ def test_root_config_with_routing_rules() -> None:
     work_phase = cfg.workflow.phases[0]
     assert len(work_phase.routing) == 2
     assert work_phase.routing[0].target == "deep-review"
+
+
+# ---------------------------------------------------------------------------
+# PhaseDefConfig.handoff_mode
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("mode", ["flat", "typed", None])
+def test_phase_def_config_handoff_mode(mode: str | None) -> None:
+    cfg = PhaseDefConfig(
+        phase_id="work", role_id="worker", kind="executor", handoff_mode=mode,
+    )
+    assert cfg.handoff_mode == mode
+
+
+def test_phase_def_config_handoff_mode_defaults_none() -> None:
+    cfg = PhaseDefConfig(phase_id="work", role_id="worker", kind="executor")
+    assert cfg.handoff_mode is None
+
+
+def test_phase_def_config_rejects_invalid_handoff_mode() -> None:
+    with pytest.raises(ValidationError):
+        PhaseDefConfig(
+            phase_id="work", role_id="worker", kind="executor", handoff_mode="custom",
+        )
+
+
+# ---------------------------------------------------------------------------
+# WorkflowConfig.handoff_mode
+# ---------------------------------------------------------------------------
+
+
+def test_workflow_config_handoff_mode_default_flat() -> None:
+    cfg = WorkflowConfig()
+    assert cfg.handoff_mode == "flat"
+
+
+@pytest.mark.parametrize("mode", ["flat", "typed"])
+def test_workflow_config_handoff_mode_accepts_valid(mode: str) -> None:
+    cfg = WorkflowConfig(handoff_mode=mode)  # type: ignore[arg-type]
+    assert cfg.handoff_mode == mode
+
+
+def test_workflow_config_rejects_invalid_handoff_mode() -> None:
+    with pytest.raises(ValidationError):
+        WorkflowConfig(handoff_mode="custom")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# ContextInjectionConfig.processing_mode
+# ---------------------------------------------------------------------------
+
+
+def test_context_injection_processing_mode_defaults_auto() -> None:
+    cfg = ContextInjectionConfig()
+    assert cfg.processing_mode == "auto"
+
+
+@pytest.mark.parametrize("mode", ["auto", "summarize", "extract", "process"])
+def test_context_injection_processing_mode_accepts_valid(mode: str) -> None:
+    cfg = ContextInjectionConfig(processing_mode=mode)  # type: ignore[arg-type]
+    assert cfg.processing_mode == mode
+
+
+def test_context_injection_processing_mode_rejects_invalid() -> None:
+    with pytest.raises(ValidationError):
+        ContextInjectionConfig(processing_mode="invalid")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# PhaseDefConfig.processing_mode
+# ---------------------------------------------------------------------------
+
+
+def test_phase_def_config_processing_mode_defaults_none() -> None:
+    cfg = PhaseDefConfig(phase_id="p", role_id="r", kind="executor")
+    assert cfg.processing_mode is None
+
+
+@pytest.mark.parametrize("mode", ["auto", "summarize", "extract", "process"])
+def test_phase_def_config_processing_mode_accepts_valid(mode: str) -> None:
+    cfg = PhaseDefConfig(phase_id="p", role_id="r", kind="executor", processing_mode=mode)  # type: ignore[arg-type]
+    assert cfg.processing_mode == mode
+
+
+def test_phase_def_config_processing_mode_rejects_invalid() -> None:
+    with pytest.raises(ValidationError):
+        PhaseDefConfig(phase_id="p", role_id="r", kind="executor", processing_mode="invalid")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# RoleConfig.chunk_instruction
+# ---------------------------------------------------------------------------
+
+
+def test_role_config_chunk_instruction_defaults_none() -> None:
+    cfg = RoleConfig(name="r", version="1.0.0")
+    assert cfg.chunk_instruction is None
+
+
+def test_role_config_chunk_instruction_accepts_string() -> None:
+    cfg = RoleConfig(name="r", version="1.0.0", chunk_instruction="Focus on security.")
+    assert cfg.chunk_instruction == "Focus on security."

@@ -10,7 +10,7 @@ from pawc_kit.contracts.config import RoutingRuleConfig
 
 
 class QuestionEntry(BaseModel):
-    """Single Q&A entry stored in ``discovery/q-and-a.json``."""
+    """Single Q&A entry stored in ``internal/q-and-a.json``."""
 
     question_id: str
     question: str
@@ -50,6 +50,10 @@ class DiscoveryPhaseConfig(BaseModel):
     human: bool = False
     role_overrides: dict[str, Any] | None = None
     routing: list[RoutingRuleConfig] = Field(default_factory=list)
+    request_changes_routing: list[RoutingRuleConfig] = Field(default_factory=list)
+    tool_capabilities: list[str] | None = None
+    tool_services: list[str] | None = None
+    tool_overrides: dict[str, str] | None = None
 
 
 class DiscoveryConfig(BaseModel):

@@ -41,6 +41,7 @@ class ContextPayload:
     context_id: str
     request_files: dict[str, str]
     discovery_handoff: HandoffContext | None = None
+    discovery_files: dict[str, str] = field(default_factory=dict)
     children: list[ContextPayload] = field(default_factory=list)
 
     @classmethod

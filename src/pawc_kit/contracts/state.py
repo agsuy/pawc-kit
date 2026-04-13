@@ -43,6 +43,7 @@ class IterationEntry(BaseModel):
     model_id: NoVersionId = None
     model_version: OptionalSemVerStr = None
     handoff_context_ref: str | None = None
+    pending_question_id: str | None = None
 
 
 class ReviewEntry(BaseModel):
@@ -62,6 +63,7 @@ class ReviewEntry(BaseModel):
     model_id: NoVersionId = None
     model_version: OptionalSemVerStr = None
     counts_verified: bool | None = None
+    gate_override_reason: str | None = None
 
 
 class SessionState(BaseModel):

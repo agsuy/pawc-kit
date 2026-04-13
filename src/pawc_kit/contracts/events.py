@@ -51,6 +51,13 @@ class IterationCommitted:
     total_tokens: int | None = None
     model: str | None = None
     model_requested: str | None = None
+    recovery_sections_requested: int = 0
+    recovery_sections_recovered: int = 0
+    recovery_batch_attempted: bool = False
+    recovery_batch_parsed: int = 0
+    recovery_individual_calls: int = 0
+    recovery_total_calls: int = 0
+    recovery_section_names: str = ""
 
 
 @dataclass(frozen=True)
@@ -75,6 +82,13 @@ class ReviewCommitted:
     total_tokens: int | None = None
     model: str | None = None
     model_requested: str | None = None
+    recovery_sections_requested: int = 0
+    recovery_sections_recovered: int = 0
+    recovery_batch_attempted: bool = False
+    recovery_batch_parsed: int = 0
+    recovery_individual_calls: int = 0
+    recovery_total_calls: int = 0
+    recovery_section_names: str = ""
 
 
 @dataclass(frozen=True)
@@ -147,6 +161,104 @@ class RunFailed:
     error_message: str
 
 
+# ---------------------------------------------------------------------------
+# Tool integration events (emitted by pawc-server's agentic loop)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ToolCallExecuted:
+    """A tool call was executed within the agentic loop."""
+
+    session_id: str
+    phase_id: str
+    role_id: str
+    iteration: int
+    tool_round: int
+    tool_name: str
+    integration_id: str
+    capability: str
+    category: str
+    is_error: bool
+    duration_ms: int
+    cost: float | None
+    arguments: dict[str, object]
+    occurred_at: str
+
+
+@dataclass(frozen=True)
+class ToolCallFailed:
+    """A tool call failed and triggered error policy."""
+
+    session_id: str
+    phase_id: str
+    role_id: str
+    tool_name: str
+    integration_id: str
+    capability: str
+    error: str
+    error_type: str  # "api_error" | "rate_limit" | "timeout" | "credential_error"
+    occurred_at: str
+
+
+@dataclass(frozen=True)
+class ToolCallFallback:
+    """A tool call switched from primary to fallback integration."""
+
+    session_id: str
+    phase_id: str
+    capability: str
+    from_integration: str
+    to_integration: str
+    reason: str
+    occurred_at: str
+
+
+@dataclass(frozen=True)
+class ToolBudgetExhausted:
+    """Tool budget limit was reached during execution."""
+
+    session_id: str
+    phase_id: str
+    limit_type: str  # "cost" | "calls" | "rounds"
+    limit_value: float
+    current_value: float
+    occurred_at: str
+
+
+# ---------------------------------------------------------------------------
+# Compression pipeline events
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CompressionCompleted:
+    """A compression pipeline invocation completed.
+
+    Emitted by the invoker after running the compression pipeline on a
+    context file.  Captures metrics for observability — the observer
+    decides how to surface them (logging, OTel spans, etc.).
+    """
+
+    session_id: str
+    phase_id: str
+    filename: str
+    strategy: str
+    overflow: str
+    pipeline_layers: tuple[str, ...]
+    original_chars: int
+    final_chars: int
+    sections_total: int
+    sections_selected: int
+    sections_dropped: int
+    exceeded_budget: bool
+    occurred_at: str
+    # Quality mode only:
+    quality_batches: int | None = None
+    quality_total_tokens: int | None = None
+    quality_cost_usd: float | None = None
+
+
 WorkflowEvent = (
     RunStarted
     | RunResumed
@@ -157,6 +269,11 @@ WorkflowEvent = (
     | PhaseTransitioned
     | RunCompleted
     | RunFailed
+    | ToolCallExecuted
+    | ToolCallFailed
+    | ToolCallFallback
+    | ToolBudgetExhausted
+    | CompressionCompleted
 )
 
 _EVENT_TYPES: tuple[type, ...] = get_args(WorkflowEvent)
@@ -200,6 +317,7 @@ def event_timestamp(event: WorkflowEvent) -> str:
 
 
 __all__ = [
+    "CompressionCompleted",
     "HumanReviewPending",
     "IterationCommitted",
     "PhaseStarted",
@@ -209,6 +327,10 @@ __all__ = [
     "RunFailed",
     "RunResumed",
     "RunStarted",
+    "ToolBudgetExhausted",
+    "ToolCallExecuted",
+    "ToolCallFailed",
+    "ToolCallFallback",
     "WorkflowEvent",
     "event_from_dict",
     "event_timestamp",

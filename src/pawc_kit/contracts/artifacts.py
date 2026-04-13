@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -32,6 +32,20 @@ class KeyArtifactRef(ArtifactRef):
     """Key artifact in handoff context (same schema as ArtifactRef)."""
 
 
+ContentPartType = Literal["prose", "code", "structured", "reference"]
+ContentPriority = Literal["critical", "standard", "supplementary"]
+
+
+class HandoffPart(BaseModel):
+    """Single typed content unit in a handoff."""
+
+    part_type: ContentPartType
+    priority: ContentPriority = "standard"
+    content: str
+    compressible: bool = True
+    metadata: dict[str, Any] | None = None
+
+
 class HandoffContext(BaseModel):
     """Handoff context body."""
 
@@ -40,6 +54,7 @@ class HandoffContext(BaseModel):
     open_questions: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
     next_steps: list[str] | None = None
+    parts: list[HandoffPart] | None = None
 
 
 class HandoffArtifactMetadata(BaseModel):
@@ -88,6 +103,7 @@ class DecisionPayload(BaseModel):
     ended_at: str
     findings: list[FindingEntry] = Field(default_factory=list)
     target_phase: str | None = None
+    gate_override_reason: str | None = None
 
     @model_validator(mode="after")
     def _require_required_change(self) -> "DecisionPayload":
@@ -103,6 +119,8 @@ class DecisionPayload(BaseModel):
 
 
 __all__ = [
+    "ContentPartType",
+    "ContentPriority",
     "DecisionPayload",
     "FileArtifact",
     "FindingEntry",
@@ -110,5 +128,6 @@ __all__ = [
     "HandoffArtifactMetadata",
     "HandoffArtifactPart",
     "HandoffContext",
+    "HandoffPart",
     "KeyArtifactRef",
 ]
