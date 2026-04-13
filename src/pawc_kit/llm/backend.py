@@ -43,10 +43,19 @@ class BackendCapabilities:
 
     ``count_tokens`` — optional callable that returns the token count for a
     string. When provided, LLM roles log token estimates before each call.
+
+    ``context_window`` — total token capacity of the model. Used to compute
+    dynamic per-invocation budgets for context injection. Required for cloud
+    models; ``None`` only for explicitly declared local models.
+
+    ``max_output_tokens`` — maximum tokens the model can generate in a single
+    response. Used when reserving budget (defaults to 4096 if unknown).
     """
 
     supports_structured_output: bool = False
     count_tokens: Callable[[str], int] | None = field(default=None, repr=False)
+    context_window: int | None = None
+    max_output_tokens: int | None = None
 
 
 @runtime_checkable

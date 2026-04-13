@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from pawc_kit.contracts.config import EfficiencyConfig, RoleConfig
+from pawc_kit.contracts.config import EfficiencyConfig, HandoffGuidanceConfig, RoleConfig
 from pawc_kit.contracts.errors import ConfigurationError
 from pawc_kit.contracts.execution import ContextPayload, ExecutionRequest
 from pawc_kit.contracts.state import IterationEntry, ReviewEntry
@@ -347,44 +347,108 @@ def test_abbreviated_schema_executor_output() -> None:
 
 def test_executor_prompts_returns_tuple() -> None:
     ctx = make_exec_ctx()
-    system, user = DefaultPromptAssembler().executor_prompts(ctx)
+    system, user, _plans = DefaultPromptAssembler().executor_prompts(ctx)
     assert isinstance(system, str)
     assert isinstance(user, str)
 
 
-def test_executor_prompts_skip_schema_omits_schema_text() -> None:
+def test_executor_prompts_includes_format_instructions() -> None:
     ctx = make_exec_ctx()
-    system, _ = DefaultPromptAssembler().executor_prompts(ctx, skip_schema=True)
-    assert "Return your response" not in system
+    system, _, _plans = DefaultPromptAssembler().executor_prompts(ctx)
+    assert 'pawc-section name="CONFIDENCE"' in system
+    assert 'pawc-section name="SUMMARY"' in system
+    assert 'pawc-section name="HANDOFF"' in system
 
 
-def test_executor_prompts_full_schema_includes_properties() -> None:
+def test_executor_prompts_typed_mode_includes_parts_instructions() -> None:
+    ctx = make_exec_ctx(handoff_mode="typed")
+    system, _, _plans = DefaultPromptAssembler().executor_prompts(ctx)
+    assert 'pawc-section name="PARTS"' in system
+    assert "pawc-part" in system
+
+
+def test_executor_prompts_flat_mode_omits_parts_instructions() -> None:
     ctx = make_exec_ctx()
-    eff = EfficiencyConfig(schema_format="full")
-    system, _ = DefaultPromptAssembler().executor_prompts(ctx, efficiency=eff)
-    assert "properties" in system
+    system, _, _plans = DefaultPromptAssembler().executor_prompts(ctx)
+    assert "pawc-part" not in system
 
 
-def test_executor_prompts_abbreviated_schema() -> None:
+def test_executor_prompts_default_handoff_guidance() -> None:
+    """Default config injects structure guidance (not old conciseness hint)."""
     ctx = make_exec_ctx()
-    eff = EfficiencyConfig(schema_format="abbreviated")
-    system, _ = DefaultPromptAssembler().executor_prompts(ctx, efficiency=eff)
-    assert '"properties"' not in system
-    assert "Return your response" in system
+    eff = EfficiencyConfig()
+    system, _, _plans = DefaultPromptAssembler().executor_prompts(ctx, efficiency=eff)
+    assert "Structure your handoff" in system
+    assert "bullet points" in system
 
 
-def test_executor_prompts_output_budget_adds_concise_instruction() -> None:
+def test_executor_prompts_handoff_guidance_disabled() -> None:
     ctx = make_exec_ctx()
-    eff = EfficiencyConfig(output_budget=True)
-    system, _ = DefaultPromptAssembler().executor_prompts(ctx, efficiency=eff)
-    assert "concise" in system.lower()
-
-
-def test_executor_prompts_no_output_budget_no_concise() -> None:
-    ctx = make_exec_ctx()
-    eff = EfficiencyConfig(output_budget=False)
-    system, _ = DefaultPromptAssembler().executor_prompts(ctx, efficiency=eff)
+    eff = EfficiencyConfig(handoff_guidance={"enabled": False})
+    system, _, _plans = DefaultPromptAssembler().executor_prompts(ctx, efficiency=eff)
+    assert "Structure your handoff" not in system
     assert "Be concise" not in system
+
+
+def test_executor_prompts_custom_guidance_text() -> None:
+    ctx = make_exec_ctx()
+    eff = EfficiencyConfig(handoff_guidance={"guidance_text": "Organize by priority."})
+    system, _, _plans = DefaultPromptAssembler().executor_prompts(ctx, efficiency=eff)
+    assert "Organize by priority." in system
+    assert "Structure your handoff" not in system
+
+
+def test_executor_prompts_per_phase_guidance_overrides_workflow() -> None:
+    """Phase-level guidance_text wins over workflow-level."""
+    phase = PhaseDefinition(
+        phase_id="work", role_id="worker-role", kind="executor",
+        handoff_guidance_text="Phase-specific guidance here.",
+    )
+    ctx = ExecutionRequest(
+        session=make_session(), phase=phase,
+        history=WorkflowHistoryView(iterations=[], reviews=[]),
+        context=ContextPayload.empty(),
+    )
+    eff = EfficiencyConfig(handoff_guidance={"guidance_text": "Workflow-level guidance."})
+    system, _, _plans = DefaultPromptAssembler().executor_prompts(ctx, efficiency=eff)
+    assert "Phase-specific guidance here." in system
+    assert "Workflow-level guidance." not in system
+
+
+def test_executor_prompts_budget_hint_opt_in() -> None:
+    """Budget hint only appears when inject_budget_hint=True AND tokens set."""
+    ctx = make_exec_ctx()
+    hg = HandoffGuidanceConfig(inject_budget_hint=True, downstream_budget_tokens=12_000)
+    eff = EfficiencyConfig(handoff_guidance=hg)
+    system, _, _plans = DefaultPromptAssembler().executor_prompts(ctx, efficiency=eff)
+    assert "12,000 tokens" in system
+
+
+def test_executor_prompts_budget_hint_not_shown_by_default() -> None:
+    """Default inject_budget_hint=False means no budget line even if tokens set."""
+    ctx = make_exec_ctx()
+    hg = HandoffGuidanceConfig(downstream_budget_tokens=12_000)
+    eff = EfficiencyConfig(handoff_guidance=hg)
+    system, _, _plans = DefaultPromptAssembler().executor_prompts(ctx, efficiency=eff)
+    assert "tokens" not in system.split("Structure your handoff")[0]
+    assert "12,000" not in system
+
+
+def test_executor_prompts_per_phase_budget_hint_override() -> None:
+    """Phase-level inject_budget_hint overrides workflow-level."""
+    phase = PhaseDefinition(
+        phase_id="work", role_id="worker-role", kind="executor",
+        inject_budget_hint=True,
+    )
+    ctx = ExecutionRequest(
+        session=make_session(), phase=phase,
+        history=WorkflowHistoryView(iterations=[], reviews=[]),
+        context=ContextPayload.empty(),
+    )
+    hg = HandoffGuidanceConfig(inject_budget_hint=False, downstream_budget_tokens=8_000)
+    eff = EfficiencyConfig(handoff_guidance=hg)
+    system, _, _plans = DefaultPromptAssembler().executor_prompts(ctx, efficiency=eff)
+    assert "8,000 tokens" in system
 
 
 # ---------------------------------------------------------------------------
@@ -394,7 +458,7 @@ def test_executor_prompts_no_output_budget_no_concise() -> None:
 
 def test_reviewer_prompts_returns_tuple() -> None:
     ctx = make_review_ctx()
-    system, user = DefaultPromptAssembler().reviewer_prompts(ctx)
+    system, user, _plans = DefaultPromptAssembler().reviewer_prompts(ctx)
     assert isinstance(system, str)
     assert isinstance(user, str)
 
@@ -402,13 +466,21 @@ def test_reviewer_prompts_returns_tuple() -> None:
 def test_reviewer_prompts_quality_gates_appear() -> None:
     ctx = make_review_ctx()
     gates = {"critical_findings_allowed": 0}
-    system, _ = DefaultPromptAssembler().reviewer_prompts(ctx, quality_gates=gates)
+    system, _, _plans = DefaultPromptAssembler().reviewer_prompts(ctx, quality_gates=gates)
     assert "Quality Gates" in system
+
+
+def test_reviewer_prompts_includes_count_verification() -> None:
+    """Reviewer system prompt includes the finding count verification instruction."""
+    ctx = make_review_ctx()
+    system, _, _plans = DefaultPromptAssembler().reviewer_prompts(ctx)
+    assert "Count your findings by severity" in system
+    assert "COUNTS_VERIFIED" in system
 
 
 def test_reviewer_prompts_no_quality_gates_no_mention() -> None:
     ctx = make_review_ctx()
-    system, _ = DefaultPromptAssembler().reviewer_prompts(ctx)
+    system, _, _plans = DefaultPromptAssembler().reviewer_prompts(ctx)
     assert "Quality Gates" not in system
 
 
@@ -421,7 +493,7 @@ def test_reviewer_prompts_finding_categories_in_system(
 ) -> None:
     ctx = make_review_ctx()
     cats = ["correctness", "security"]
-    system, _ = DefaultPromptAssembler().reviewer_prompts(ctx, role_config, finding_categories=cats)
+    system, _, _plans = DefaultPromptAssembler().reviewer_prompts(ctx, role_config, finding_categories=cats)
     assert "Finding categories" in system
     assert "correctness" in system and "security" in system
 
@@ -435,7 +507,7 @@ def test_reviewer_prompts_role_extra_suppresses_invoker_finding_categories_line(
             "finding_categories": ["security", "ux"],
         }
     )
-    system, _ = DefaultPromptAssembler().reviewer_prompts(
+    system, _, _plans = DefaultPromptAssembler().reviewer_prompts(
         ctx, cfg, finding_categories=["template_only"]
     )
     assert "Allowed finding categories:" in system
@@ -446,21 +518,302 @@ def test_reviewer_prompts_role_extra_suppresses_invoker_finding_categories_line(
 
 def test_reviewer_prompts_no_finding_categories_unchanged() -> None:
     ctx = make_review_ctx()
-    system_none, _ = DefaultPromptAssembler().reviewer_prompts(ctx, finding_categories=None)
-    system_omit, _ = DefaultPromptAssembler().reviewer_prompts(ctx)
+    system_none, _, _p1 = DefaultPromptAssembler().reviewer_prompts(ctx, finding_categories=None)
+    system_omit, _, _p2 = DefaultPromptAssembler().reviewer_prompts(ctx)
     assert "Finding categories" not in system_none
     assert system_none == system_omit
 
 
-def test_reviewer_prompts_request_change_targets_in_user() -> None:
+def test_reviewer_prompts_no_request_change_targets_in_user() -> None:
+    """request_change_targets are no longer surfaced — engine owns routing."""
     ctx = make_review_ctx()
-    _, user = DefaultPromptAssembler().reviewer_prompts(ctx)
-    assert "Can request changes from" in user
+    _, user, _plans = DefaultPromptAssembler().reviewer_prompts(ctx)
+    assert "Can request changes from" not in user
 
 
 @pytest.mark.parametrize("verbosity", ["full", "json", "jsonl"])
 def test_reviewer_prompts_verbosity_permutations(verbosity: str) -> None:
     ctx = make_review_ctx()
     eff = EfficiencyConfig(prompt_verbosity=verbosity)  # type: ignore[arg-type]
-    system, user = DefaultPromptAssembler().reviewer_prompts(ctx, efficiency=eff)
+    system, user, _plans = DefaultPromptAssembler().reviewer_prompts(ctx, efficiency=eff)
     assert isinstance(system, str) and len(system) > 0
+
+
+def test_reviewer_prompts_default_conciseness_hint() -> None:
+    """Reviewer gets conciseness hint by default, NOT handoff structure guidance."""
+    ctx = make_review_ctx()
+    eff = EfficiencyConfig()
+    system, _, _plans = DefaultPromptAssembler().reviewer_prompts(ctx, efficiency=eff)
+    assert "Be concise" in system
+    assert "Structure your handoff" not in system
+    assert "tokens" not in system
+
+
+def test_reviewer_prompts_guidance_disabled_no_hint() -> None:
+    ctx = make_review_ctx()
+    eff = EfficiencyConfig(handoff_guidance={"enabled": False})
+    system, _, _plans = DefaultPromptAssembler().reviewer_prompts(ctx, efficiency=eff)
+    assert "Be concise" not in system
+
+
+def test_reviewer_prompts_custom_guidance_text() -> None:
+    """Reviewer uses custom guidance_text when set."""
+    ctx = make_review_ctx()
+    eff = EfficiencyConfig(handoff_guidance={"guidance_text": "Keep it short."})
+    system, _, _plans = DefaultPromptAssembler().reviewer_prompts(ctx, efficiency=eff)
+    assert "Keep it short." in system
+    assert "Be concise" not in system
+
+
+def test_reviewer_prompts_no_budget_hint() -> None:
+    """Reviewer never gets budget hints even when inject_budget_hint=True."""
+    ctx = make_review_ctx()
+    hg = HandoffGuidanceConfig(inject_budget_hint=True, downstream_budget_tokens=10_000)
+    eff = EfficiencyConfig(handoff_guidance=hg)
+    system, _, _plans = DefaultPromptAssembler().reviewer_prompts(ctx, efficiency=eff)
+    assert "10,000" not in system
+
+
+# ---------------------------------------------------------------------------
+# discovery_files_section
+# ---------------------------------------------------------------------------
+
+
+def test_discovery_files_section_empty_returns_empty() -> None:
+    from pawc_kit.llm.prompts import discovery_files_section
+
+    ctx = make_exec_ctx()
+    assert discovery_files_section(ctx) == ""
+
+
+def test_discovery_files_section_renders_files() -> None:
+    from pawc_kit.llm.prompts import discovery_files_section
+
+    payload = ContextPayload(
+        context_id="c1",
+        request_files={},
+        discovery_files={"findings.md": "# Findings\nSome data."},
+    )
+    ctx = make_exec_ctx(context=payload)
+    result = discovery_files_section(ctx)
+    assert "## Discovery Files" in result
+    assert "### findings.md" in result
+    assert "# Findings" in result
+
+
+# ---------------------------------------------------------------------------
+# max_discovery_summary_chars
+# ---------------------------------------------------------------------------
+
+
+def test_max_discovery_summary_chars_caps_summary() -> None:
+    from pawc_kit.contracts.artifacts import HandoffContext
+    from pawc_kit.contracts.config import ContextInjectionConfig
+    from pawc_kit.llm.prompts import discovery_section
+
+    payload = ContextPayload(
+        context_id="c1",
+        request_files={},
+        discovery_handoff=HandoffContext(summary="A" * 1000),
+    )
+    ctx = make_exec_ctx(context=payload)
+    cfg = ContextInjectionConfig(max_discovery_summary_chars=100)
+    result = discovery_section(ctx, injection=cfg)
+    assert "A" * 100 + "..." in result
+    assert "A" * 101 not in result
+
+
+def test_max_discovery_summary_chars_none_no_cap() -> None:
+    from pawc_kit.contracts.artifacts import HandoffContext
+    from pawc_kit.contracts.config import ContextInjectionConfig
+    from pawc_kit.llm.prompts import discovery_section
+
+    payload = ContextPayload(
+        context_id="c1",
+        request_files={},
+        discovery_handoff=HandoffContext(summary="A" * 1000),
+    )
+    ctx = make_exec_ctx(context=payload)
+    cfg = ContextInjectionConfig(max_discovery_summary_chars=None)
+    result = discovery_section(ctx, injection=cfg)
+    assert "A" * 1000 in result
+
+
+# ---------------------------------------------------------------------------
+# executor/reviewer prompts include discovery files
+# ---------------------------------------------------------------------------
+
+
+def test_executor_prompts_includes_discovery_files() -> None:
+    payload = ContextPayload(
+        context_id="c1",
+        request_files={"spec.md": "# Spec"},
+        discovery_files={"analysis.md": "# Analysis\nDetailed."},
+    )
+    ctx = make_exec_ctx(context=payload)
+    _, user, _plans = DefaultPromptAssembler().executor_prompts(ctx)
+    assert "## Discovery Files" in user
+    assert "### analysis.md" in user
+
+
+def test_reviewer_prompts_includes_discovery_files() -> None:
+    payload = ContextPayload(
+        context_id="c1",
+        request_files={"spec.md": "# Spec"},
+        discovery_files={"analysis.md": "# Analysis\nDetailed."},
+    )
+    ctx = make_review_ctx(context=payload)
+    _, user, _plans = DefaultPromptAssembler().reviewer_prompts(ctx)
+    assert "## Discovery Files" in user
+    assert "### analysis.md" in user
+
+
+# ---------------------------------------------------------------------------
+# _render_handoff_parts / typed parts in discovery_section
+# ---------------------------------------------------------------------------
+
+
+def test_render_handoff_parts_no_pressure() -> None:
+    from pawc_kit.contracts.artifacts import HandoffPart
+    from pawc_kit.llm.prompts import _render_handoff_parts
+
+    parts = [
+        HandoffPart(part_type="prose", priority="critical", content="key finding"),
+        HandoffPart(part_type="code", priority="standard", content="def f(): pass",
+                    metadata={"language": "python"}),
+    ]
+    result = _render_handoff_parts(parts, _noop_compressor(), budget=None)
+    assert "[critical][prose] key finding" in result
+    assert "```python" in result
+    assert "def f(): pass" in result
+
+
+def test_render_handoff_parts_aggressive_drops_supplementary() -> None:
+    from pawc_kit.contracts.artifacts import HandoffPart
+    from pawc_kit.llm.prompts import _render_handoff_parts
+
+    parts = [
+        HandoffPart(part_type="prose", priority="critical", content="keep me"),
+        HandoffPart(part_type="prose", priority="supplementary", content="drop me"),
+    ]
+    # Budget = 1 char, content = 17 chars → ratio >> 8.0 → emergency
+    # critical + emergency → compress, supplementary + emergency → drop
+    result = _render_handoff_parts(parts, _noop_compressor(), budget=1)
+    assert "keep me" in result
+    assert "drop me" not in result
+    assert "1 supplementary parts omitted" in result
+
+
+def test_render_handoff_parts_code_formatting() -> None:
+    from pawc_kit.contracts.artifacts import HandoffPart
+    from pawc_kit.llm.prompts import _render_handoff_parts
+
+    parts = [HandoffPart(part_type="code", content="x = 1", metadata={"language": "python"})]
+    result = _render_handoff_parts(parts, _noop_compressor(), budget=None)
+    assert "```python" in result
+    assert "x = 1" in result
+    assert "```" in result
+
+
+def test_render_handoff_parts_structured_formatting() -> None:
+    from pawc_kit.contracts.artifacts import HandoffPart
+    from pawc_kit.llm.prompts import _render_handoff_parts
+
+    parts = [HandoffPart(part_type="structured", content='{"key": "value"}')]
+    result = _render_handoff_parts(parts, _noop_compressor(), budget=None)
+    assert "[standard][structured]" in result
+    assert '{"key": "value"}' in result
+
+
+def test_render_handoff_parts_dropped_count_message() -> None:
+    from pawc_kit.contracts.artifacts import HandoffPart
+    from pawc_kit.llm.prompts import _render_handoff_parts
+
+    parts = [
+        HandoffPart(part_type="prose", priority="supplementary", content="a" * 100),
+        HandoffPart(part_type="prose", priority="supplementary", content="b" * 100),
+    ]
+    # 200 chars / 1 budget → ratio 200 → emergency → supplementary dropped
+    result = _render_handoff_parts(parts, _noop_compressor(), budget=1)
+    assert "2 supplementary parts omitted" in result
+
+
+def test_discovery_section_with_parts() -> None:
+    from pawc_kit.contracts.artifacts import HandoffContext, HandoffPart
+    from pawc_kit.contracts.config import ContextInjectionConfig
+    from pawc_kit.llm.prompts import discovery_section
+
+    handoff = HandoffContext(
+        summary="summary",
+        parts=[HandoffPart(part_type="prose", priority="critical", content="important")],
+    )
+    payload = ContextPayload(
+        context_id="c1",
+        request_files={},
+        discovery_handoff=handoff,
+    )
+    ctx = make_exec_ctx(context=payload)
+    result = discovery_section(ctx, injection=ContextInjectionConfig())
+    assert "### Typed Findings" in result
+    assert "[critical][prose] important" in result
+
+
+def test_discovery_section_no_parts_fallback() -> None:
+    from pawc_kit.contracts.artifacts import HandoffContext
+    from pawc_kit.contracts.config import ContextInjectionConfig
+    from pawc_kit.llm.prompts import discovery_section
+
+    handoff = HandoffContext(summary="just a summary")
+    payload = ContextPayload(
+        context_id="c1",
+        request_files={},
+        discovery_handoff=handoff,
+    )
+    ctx = make_exec_ctx(context=payload)
+    result = discovery_section(ctx, injection=ContextInjectionConfig())
+    assert "just a summary" in result
+    assert "### Typed Findings" not in result
+
+
+def _noop_compressor():
+    """Compressor that returns content unchanged."""
+
+    class _NoopResult:
+        def __init__(self, content: str):
+            self.content = content
+            self.original_chars = len(content)
+            self.compressed_chars = len(content)
+            self.layers_applied = []
+
+    class _NoopCompressor:
+        def compress(self, content, *, budget=None, filename=None, content_type=None):
+            return _NoopResult(content)
+
+    return _NoopCompressor()
+
+
+def test_render_handoff_parts_passthrough_exceeds_budget() -> None:
+    """When passthrough content exceeds total budget, compressed parts get budget=0, not negative."""
+    from pawc_kit.contracts.artifacts import HandoffPart
+    from pawc_kit.llm.prompts import _render_handoff_parts
+
+    budgets_seen: list[int] = []
+
+    class _TrackingResult:
+        def __init__(self, content: str):
+            self.content = content
+            self.original_chars = len(content)
+            self.compressed_chars = len(content)
+            self.layers_applied = []
+
+    class _TrackingCompressor:
+        def compress(self, content, *, budget=None, filename=None, content_type=None):
+            budgets_seen.append(budget)
+            return _TrackingResult(content)
+
+    parts = [
+        HandoffPart(part_type="prose", priority="critical", content="A" * 2000),  # passthrough
+        HandoffPart(part_type="prose", priority="standard", content="B" * 100, compressible=True),
+    ]
+    _render_handoff_parts(parts, _TrackingCompressor(), budget=500)
+    assert all(b >= 0 for b in budgets_seen), f"Negative budget passed: {budgets_seen}"

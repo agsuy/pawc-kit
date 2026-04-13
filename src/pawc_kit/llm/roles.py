@@ -22,7 +22,11 @@ from pawc_kit.contracts.artifacts import KeyArtifactRef
 from pawc_kit.contracts.execution import ExecutionRequest, ReviewRequest
 from pawc_kit.llm.backend import AsyncLLMBackend, LLMBackend, TokenUsage
 from pawc_kit.llm.prompts import DefaultPromptAssembler
-from pawc_kit.llm.structured import AsyncStructuredOutput, StructuredOutput
+from pawc_kit.llm.retry import (
+    RetryPolicy,
+    async_complete_with_retry,
+    complete_with_retry,
+)
 from pawc_kit.ports.compressor import ContextCompressor
 from pawc_kit.ports.prompts import PromptAssembler
 from pawc_kit.validators import check_quality_gates
@@ -102,13 +106,34 @@ def _merge_token_usage(total: TokenUsage, addition: TokenUsage) -> TokenUsage:
     )
 
 
-def _should_skip_schema(
-    backend: LLMBackend | AsyncLLMBackend, efficiency: EfficiencyConfig | None
-) -> bool:
-    skip = backend.capabilities().supports_structured_output
-    if efficiency and efficiency.schema_format == "none":
-        skip = True
-    return skip
+def _apply_recovered_section(
+    output: ExecutorOutput, section: str, recovered: str,
+) -> ExecutorOutput:
+    """Apply a recovered section value to an ExecutorOutput."""
+    from pawc_kit.llm.md_output import EXECUTOR_SECTIONS, apply_recovered_standard
+
+    result = apply_recovered_standard(output, section, recovered, EXECUTOR_SECTIONS)
+    if result is not None:
+        return result  # type: ignore[return-value]
+    # Custom: HANDOFF is a nested field (handoff.summary)
+    if section == "HANDOFF":
+        return output.model_copy(update={
+            "handoff": output.handoff.model_copy(update={"summary": recovered}),
+        })
+    return output
+
+
+def _apply_recovered_reviewer_section(
+    output: ReviewerOutput, section: str, recovered: str,
+) -> ReviewerOutput:
+    """Apply a recovered section value to a ReviewerOutput."""
+    from pawc_kit.llm.md_output import REVIEWER_SECTIONS, apply_recovered_standard
+
+    result = apply_recovered_standard(output, section, recovered, REVIEWER_SECTIONS)
+    if result is not None:
+        return result  # type: ignore[return-value]
+    # All reviewer recoverable sections are standard — no custom fallback needed.
+    return output
 
 
 def _estimate_tokens(backend: LLMBackend | AsyncLLMBackend, system: str, user: str) -> dict | None:
@@ -159,7 +184,6 @@ class _LLMRoleBase(Generic[_BackendT]):
         injection: ContextInjectionConfig | None = None,
         compressor: ContextCompressor | None = None,
         prompt_assembler: PromptAssembler | None = None,
-        max_retries: int = 2,
         artifact_backfill_retries: int = 1,
     ) -> None:
         self._backend = backend
@@ -168,7 +192,6 @@ class _LLMRoleBase(Generic[_BackendT]):
         self._injection = injection
         self._compressor = compressor
         self._assembler = prompt_assembler or DefaultPromptAssembler()
-        self._max_retries = max_retries
         self._artifact_backfill_retries = artifact_backfill_retries
         self.last_usage: TokenUsage | None = None
         self.last_token_estimate: dict | None = None
@@ -178,19 +201,16 @@ class _LLMRoleBase(Generic[_BackendT]):
     def _finding_categories_for_reviewer(self) -> list[str] | None:
         return None
 
-    def _assemble_executor(self, req: ExecutionRequest) -> tuple[str, str]:
+    def _assemble_executor(self, req: ExecutionRequest) -> tuple[str, str, list]:
         role_config = _resolve_role_config(
             req.phase.role_id, self._role_configs, req.phase.role_overrides
         )
-        skip = _should_skip_schema(self._backend, self._efficiency)
-        system, user = self._assembler.executor_prompts(
+        system, user, split_plans = self._assembler.executor_prompts(
             req,
             role_config,
             efficiency=self._efficiency,
             injection=self._injection,
             compressor=self._compressor,
-            skip_schema=skip,
-            output_model=ExecutorOutput,
         )
         self.last_system_prompt = system
         self.last_user_prompt = user
@@ -206,18 +226,17 @@ class _LLMRoleBase(Generic[_BackendT]):
             },
         )
         self.last_token_estimate = _estimate_tokens(self._backend, system, user)
-        return system, user
+        return system, user, split_plans
 
     def _assemble_reviewer(
         self,
         req: ReviewRequest,
         quality_gates: dict[str, object],
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, list]:
         role_config = _resolve_role_config(
             req.phase.role_id, self._role_configs, req.phase.role_overrides
         )
-        skip = _should_skip_schema(self._backend, self._efficiency)
-        system, user = self._assembler.reviewer_prompts(
+        system, user, split_plans = self._assembler.reviewer_prompts(
             req,
             role_config,
             quality_gates=quality_gates,
@@ -225,8 +244,6 @@ class _LLMRoleBase(Generic[_BackendT]):
             efficiency=self._efficiency,
             injection=self._injection,
             compressor=self._compressor,
-            skip_schema=skip,
-            output_model=ReviewerOutput,
         )
         self.last_system_prompt = system
         self.last_user_prompt = user
@@ -242,7 +259,7 @@ class _LLMRoleBase(Generic[_BackendT]):
             },
         )
         self.last_token_estimate = _estimate_tokens(self._backend, system, user)
-        return system, user
+        return system, user, split_plans
 
 
 def _enforce_quality_gates(
@@ -252,6 +269,10 @@ def _enforce_quality_gates(
     """Return ``(decision, gate_override_reason)``."""
     decision = output.decision
     gate_override_reason: str | None = None
+
+    if not output.counts_verified and output.findings:
+        _logger.warning("Reviewer reported unverified finding counts")
+
     if quality_gates and decision == "APPROVE":
         critical_allowed = int(str(quality_gates.get("critical_findings_allowed", 0)))
         high_allowed = int(str(quality_gates.get("high_findings_allowed", 1)))
@@ -259,31 +280,35 @@ def _enforce_quality_gates(
         if not passed:
             decision = "REQUEST_CHANGES"
             gate_override_reason = f"Quality gate enforced: {reason}"
+        elif (
+            quality_gates.get("require_counts_verified")
+            and not output.counts_verified
+            and output.findings
+        ):
+            decision = "REQUEST_CHANGES"
+            gate_override_reason = (
+                "Quality gate enforced: counts_verified is false with findings present"
+            )
+
     return decision, gate_override_reason
 
 
-def _resolve_request_changes_target_phase(
+def _resolve_request_changes_target(
     decision: _ReviewDecision,
-    output_target: str | None,
-    request_change_targets: list[str],
+    confidence_score: int,
+    request_changes_routing: list[RoutingRuleConfig],
 ) -> str | None:
-    """Fill ``target_phase`` when it is missing under ``REQUEST_CHANGES``.
+    """Derive ``target_phase`` for REQUEST_CHANGES using confidence-based routing.
 
-    For a single ``can_request_changes_from`` target the engine resolves the
-    loop target without ``target_phase``. For multiple targets the workflow
-    requires a choice; if the model omits it (or a quality gate upgrades
-    ``APPROVE`` → ``REQUEST_CHANGES`` without one), default to the **last**
-    entry in *request_change_targets* (YAML declaration order: typically the
-    phase whose outputs the reviewer evaluated most directly, e.g. *synthesis*
-    before ``ai_review`` in discovery templates).
+    Reuses :func:`resolve_chosen_next` — the same routing logic used for
+    executor on_complete and reviewer on_approve transitions.
+
+    Returns ``None`` for APPROVE or when no routing rules are configured
+    (single-target phases auto-resolve in the engine).
     """
     if decision != "REQUEST_CHANGES":
-        return output_target
-    if output_target is not None:
-        return output_target
-    if len(request_change_targets) <= 1:
         return None
-    return request_change_targets[-1]
+    return resolve_chosen_next(confidence_score, request_changes_routing)
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +344,12 @@ def _apply_backfill_result(
     return True
 
 
+def _is_acceptable_backfill(text: str) -> bool:
+    """Reject empty and JSON-looking responses before retry."""
+    stripped = text.strip()
+    return bool(stripped) and not stripped.startswith("{")
+
+
 def _run_backfill(
     role: _LLMRoleBase,  # type: ignore[type-arg]
     output: "ExecutorOutput",
@@ -348,18 +379,20 @@ def _run_backfill(
         phase_id,
         role_id,
     )
-    backfill = StructuredOutput(role._backend, max_retries=role._artifact_backfill_retries)
+    policy = RetryPolicy(max_retries=role._artifact_backfill_retries)
     for ka in file_refs:
         try:
-            fc = backfill.call(
+            result = complete_with_retry(
+                role._backend,
                 system,
                 (
                     f"Produce the full markdown content for the file at `{ka.ref}` "
                     f"described as: {ka.description}."
                 ),
-                FileContent,
+                policy=policy,
+                is_acceptable=_is_acceptable_backfill,
             )
-            _apply_backfill_result(role, output, fc.content, backfill.last_usage, ka)
+            _apply_backfill_result(role, output, result.text, result.usage, ka)
         except LLMError:
             _logger.warning("Backfill: LLM call failed for %s, skipping", ka.ref)
 
@@ -392,18 +425,20 @@ async def _run_backfill_async(
         phase_id,
         role_id,
     )
-    backfill = AsyncStructuredOutput(role._backend, max_retries=role._artifact_backfill_retries)
+    policy = RetryPolicy(max_retries=role._artifact_backfill_retries)
     for ka in file_refs:
         try:
-            fc = await backfill.call(
+            result = await async_complete_with_retry(
+                role._backend,
                 system,
                 (
                     f"Produce the full markdown content for the file at `{ka.ref}` "
                     f"described as: {ka.description}."
                 ),
-                FileContent,
+                policy=policy,
+                is_acceptable=_is_acceptable_backfill,
             )
-            _apply_backfill_result(role, output, fc.content, backfill.last_usage, ka)
+            _apply_backfill_result(role, output, result.text, result.usage, ka)
         except LLMError:
             _logger.warning("Backfill: LLM call failed for %s, skipping", ka.ref)
 
@@ -423,7 +458,6 @@ class LLMExecutorRole(_LLMRoleBase[LLMBackend], Executor):
         injection: ContextInjectionConfig | None = None,
         compressor: ContextCompressor | None = None,
         prompt_assembler: PromptAssembler | None = None,
-        max_retries: int = 2,
         artifact_backfill_retries: int = 1,
     ) -> None:
         super().__init__(
@@ -433,18 +467,60 @@ class LLMExecutorRole(_LLMRoleBase[LLMBackend], Executor):
             injection=injection,
             compressor=compressor,
             prompt_assembler=prompt_assembler,
-            max_retries=max_retries,
             artifact_backfill_retries=artifact_backfill_retries,
         )
 
     def execute(self, req: ExecutionRequest) -> ExecutionResult:
-        system, user = self._assemble_executor(req)
-        structured = StructuredOutput(
-            self._backend,
-            max_retries=self._max_retries,
-        )
-        output = structured.call(system, user, ExecutorOutput)
-        self.last_usage = structured.last_usage
+        system, user, _split_plans = self._assemble_executor(req)
+
+        result = self._backend.complete(system, user)
+        self.last_usage = result.usage
+
+        from pawc_kit.llm.md_output import missing_sections, parse_executor_output
+
+        output = parse_executor_output(result.text)
+
+        recovery_meta = None
+        missing = missing_sections(output, result.text)
+        if missing:
+            _logger.info(
+                "recovery.triggered",
+                extra={"sections": missing, "phase_id": req.phase.phase_id, "role_id": req.phase.role_id},
+            )
+            from pawc_kit.llm.section_recovery import recover_sections
+
+            recovery = recover_sections(self._backend, missing, result.text)
+            for section, value in recovery.recovered.items():
+                output = _apply_recovered_section(output, section, value)
+            if recovery.usage and self.last_usage:
+                self.last_usage = _merge_token_usage(self.last_usage, recovery.usage)
+            elif recovery.usage:
+                self.last_usage = recovery.usage
+            recovery_meta = recovery.to_metadata()
+            _logger.info(
+                "recovery.completed",
+                extra={
+                    "requested": recovery.sections_requested,
+                    "recovered": recovery.sections_recovered,
+                    "phase_id": req.phase.phase_id,
+                    "role_id": req.phase.role_id,
+                },
+            )
+
+        if output.confidence_score == 0:
+            raise LLMError(
+                "Confidence score is 0 after recovery — requires human review"
+            )
+
+        if output.handoff and output.handoff.parts:
+            from pawc_kit.llm.enrichment import enrich_handoff_parts
+            from pawc_kit.llm.part_validation import validate_handoff_parts
+
+            validated = validate_handoff_parts(output.handoff.parts, self._backend)
+            enriched = enrich_handoff_parts(validated)
+            output = output.model_copy(update={
+                "handoff": output.handoff.model_copy(update={"parts": enriched}),
+            })
 
         _run_backfill(self, output, system, req.phase.phase_id, req.phase.role_id)
 
@@ -458,6 +534,7 @@ class LLMExecutorRole(_LLMRoleBase[LLMBackend], Executor):
             files=list(output.artifacts),
             chosen_next=resolve_chosen_next(output.confidence_score, req.phase.routing),
             usage=self.last_usage,
+            recovery=recovery_meta,
         )
 
 
@@ -473,7 +550,6 @@ class LLMReviewerRole(_LLMRoleBase[LLMBackend], Reviewer):
         injection: ContextInjectionConfig | None = None,
         compressor: ContextCompressor | None = None,
         prompt_assembler: PromptAssembler | None = None,
-        max_retries: int = 2,
         artifact_backfill_retries: int = 1,
     ) -> None:
         super().__init__(
@@ -483,7 +559,6 @@ class LLMReviewerRole(_LLMRoleBase[LLMBackend], Reviewer):
             injection=injection,
             compressor=compressor,
             prompt_assembler=prompt_assembler,
-            max_retries=max_retries,
             artifact_backfill_retries=artifact_backfill_retries,
         )
         self._quality_gates = dict(quality_gates or {})
@@ -493,16 +568,58 @@ class LLMReviewerRole(_LLMRoleBase[LLMBackend], Reviewer):
         return self._finding_categories
 
     def review(self, req: ReviewRequest) -> ReviewResult:
-        system, user = self._assemble_reviewer(req, dict(self._quality_gates))
-        structured = StructuredOutput(
-            self._backend,
-            max_retries=self._max_retries,
-        )
-        output = structured.call(system, user, ReviewerOutput)
-        self.last_usage = structured.last_usage
+        system, user, _split_plans = self._assemble_reviewer(req, dict(self._quality_gates))
+
+        result = self._backend.complete(system, user)
+        self.last_usage = result.usage
+
+        from pawc_kit.llm.md_output import missing_reviewer_sections, parse_reviewer_output
+
+        output = parse_reviewer_output(result.text)
+
+        recovery_meta = None
+        missing = missing_reviewer_sections(output, result.text)
+        if missing:
+            _logger.info(
+                "recovery.triggered",
+                extra={"sections": missing, "phase_id": req.phase.phase_id, "role_id": req.phase.role_id},
+            )
+            from pawc_kit.llm.section_recovery import recover_sections
+
+            recovery = recover_sections(self._backend, missing, result.text)
+            for section, value in recovery.recovered.items():
+                output = _apply_recovered_reviewer_section(output, section, value)
+            if recovery.usage and self.last_usage:
+                self.last_usage = _merge_token_usage(self.last_usage, recovery.usage)
+            elif recovery.usage:
+                self.last_usage = recovery.usage
+            recovery_meta = recovery.to_metadata()
+            _logger.info(
+                "recovery.completed",
+                extra={
+                    "requested": recovery.sections_requested,
+                    "recovered": recovery.sections_recovered,
+                    "phase_id": req.phase.phase_id,
+                    "role_id": req.phase.role_id,
+                },
+            )
+
+        if output.confidence_score == 0:
+            raise LLMError(
+                "Confidence score is 0 after recovery — requires human review"
+            )
+
         decision, gate_override_reason = _enforce_quality_gates(output, self._quality_gates)
-        target_phase = _resolve_request_changes_target_phase(
-            decision, output.target_phase, list(req.request_change_targets)
+
+        if output.findings:
+            from pawc_kit.llm.finding_validation import validate_findings
+
+            validated_findings = validate_findings(output.findings, decision, self._backend)
+        else:
+            validated_findings = output.findings
+
+        target_phase = _resolve_request_changes_target(
+            decision, output.confidence_score, req.phase.request_changes_routing,
         )
 
         chosen_next: str | None = None
@@ -517,12 +634,13 @@ class LLMReviewerRole(_LLMRoleBase[LLMBackend], Reviewer):
                 confidence_score=output.confidence_score,
                 counts_verified=output.counts_verified,
                 summary=output.summary,
-                findings=output.findings,
+                findings=validated_findings,
                 target_phase=target_phase,
                 gate_override_reason=gate_override_reason,
             ),
             chosen_next=chosen_next,
-            usage=structured.last_usage,
+            usage=self.last_usage,
+            recovery=recovery_meta,
         )
 
 
@@ -536,7 +654,6 @@ class AsyncLLMExecutorRole(_LLMRoleBase[AsyncLLMBackend], AsyncExecutor):
         injection: ContextInjectionConfig | None = None,
         compressor: ContextCompressor | None = None,
         prompt_assembler: PromptAssembler | None = None,
-        max_retries: int = 2,
         artifact_backfill_retries: int = 1,
     ) -> None:
         super().__init__(
@@ -546,18 +663,60 @@ class AsyncLLMExecutorRole(_LLMRoleBase[AsyncLLMBackend], AsyncExecutor):
             injection=injection,
             compressor=compressor,
             prompt_assembler=prompt_assembler,
-            max_retries=max_retries,
             artifact_backfill_retries=artifact_backfill_retries,
         )
 
     async def execute(self, req: ExecutionRequest) -> ExecutionResult:
-        system, user = self._assemble_executor(req)
-        structured = AsyncStructuredOutput(
-            self._backend,
-            max_retries=self._max_retries,
-        )
-        output = await structured.call(system, user, ExecutorOutput)
-        self.last_usage = structured.last_usage
+        system, user, _split_plans = self._assemble_executor(req)
+
+        result = await self._backend.complete(system, user)
+        self.last_usage = result.usage
+
+        from pawc_kit.llm.md_output import missing_sections, parse_executor_output
+
+        output = parse_executor_output(result.text)
+
+        recovery_meta = None
+        missing = missing_sections(output, result.text)
+        if missing:
+            _logger.info(
+                "recovery.triggered",
+                extra={"sections": missing, "phase_id": req.phase.phase_id, "role_id": req.phase.role_id},
+            )
+            from pawc_kit.llm.section_recovery import async_recover_sections
+
+            recovery = await async_recover_sections(self._backend, missing, result.text)
+            for section, value in recovery.recovered.items():
+                output = _apply_recovered_section(output, section, value)
+            if recovery.usage and self.last_usage:
+                self.last_usage = _merge_token_usage(self.last_usage, recovery.usage)
+            elif recovery.usage:
+                self.last_usage = recovery.usage
+            recovery_meta = recovery.to_metadata()
+            _logger.info(
+                "recovery.completed",
+                extra={
+                    "requested": recovery.sections_requested,
+                    "recovered": recovery.sections_recovered,
+                    "phase_id": req.phase.phase_id,
+                    "role_id": req.phase.role_id,
+                },
+            )
+
+        if output.confidence_score == 0:
+            raise LLMError(
+                "Confidence score is 0 after recovery — requires human review"
+            )
+
+        if output.handoff and output.handoff.parts:
+            from pawc_kit.llm.enrichment import enrich_handoff_parts
+            from pawc_kit.llm.part_validation import async_validate_handoff_parts
+
+            validated = await async_validate_handoff_parts(output.handoff.parts, self._backend)
+            enriched = enrich_handoff_parts(validated)
+            output = output.model_copy(update={
+                "handoff": output.handoff.model_copy(update={"parts": enriched}),
+            })
 
         await _run_backfill_async(self, output, system, req.phase.phase_id, req.phase.role_id)
 
@@ -571,6 +730,7 @@ class AsyncLLMExecutorRole(_LLMRoleBase[AsyncLLMBackend], AsyncExecutor):
             files=list(output.artifacts),
             chosen_next=resolve_chosen_next(output.confidence_score, req.phase.routing),
             usage=self.last_usage,
+            recovery=recovery_meta,
         )
 
 
@@ -586,7 +746,6 @@ class AsyncLLMReviewerRole(_LLMRoleBase[AsyncLLMBackend], AsyncReviewer):
         injection: ContextInjectionConfig | None = None,
         compressor: ContextCompressor | None = None,
         prompt_assembler: PromptAssembler | None = None,
-        max_retries: int = 2,
         artifact_backfill_retries: int = 1,
     ) -> None:
         super().__init__(
@@ -596,7 +755,6 @@ class AsyncLLMReviewerRole(_LLMRoleBase[AsyncLLMBackend], AsyncReviewer):
             injection=injection,
             compressor=compressor,
             prompt_assembler=prompt_assembler,
-            max_retries=max_retries,
             artifact_backfill_retries=artifact_backfill_retries,
         )
         self._quality_gates = dict(quality_gates or {})
@@ -606,16 +764,60 @@ class AsyncLLMReviewerRole(_LLMRoleBase[AsyncLLMBackend], AsyncReviewer):
         return self._finding_categories
 
     async def review(self, req: ReviewRequest) -> ReviewResult:
-        system, user = self._assemble_reviewer(req, dict(self._quality_gates))
-        structured = AsyncStructuredOutput(
-            self._backend,
-            max_retries=self._max_retries,
-        )
-        output = await structured.call(system, user, ReviewerOutput)
-        self.last_usage = structured.last_usage
+        system, user, _split_plans = self._assemble_reviewer(req, dict(self._quality_gates))
+
+        result = await self._backend.complete(system, user)
+        self.last_usage = result.usage
+
+        from pawc_kit.llm.md_output import missing_reviewer_sections, parse_reviewer_output
+
+        output = parse_reviewer_output(result.text)
+
+        recovery_meta = None
+        missing = missing_reviewer_sections(output, result.text)
+        if missing:
+            _logger.info(
+                "recovery.triggered",
+                extra={"sections": missing, "phase_id": req.phase.phase_id, "role_id": req.phase.role_id},
+            )
+            from pawc_kit.llm.section_recovery import async_recover_sections
+
+            recovery = await async_recover_sections(self._backend, missing, result.text)
+            for section, value in recovery.recovered.items():
+                output = _apply_recovered_reviewer_section(output, section, value)
+            if recovery.usage and self.last_usage:
+                self.last_usage = _merge_token_usage(self.last_usage, recovery.usage)
+            elif recovery.usage:
+                self.last_usage = recovery.usage
+            recovery_meta = recovery.to_metadata()
+            _logger.info(
+                "recovery.completed",
+                extra={
+                    "requested": recovery.sections_requested,
+                    "recovered": recovery.sections_recovered,
+                    "phase_id": req.phase.phase_id,
+                    "role_id": req.phase.role_id,
+                },
+            )
+
+        if output.confidence_score == 0:
+            raise LLMError(
+                "Confidence score is 0 after recovery — requires human review"
+            )
+
         decision, gate_override_reason = _enforce_quality_gates(output, self._quality_gates)
-        target_phase = _resolve_request_changes_target_phase(
-            decision, output.target_phase, list(req.request_change_targets)
+
+        if output.findings:
+            from pawc_kit.llm.finding_validation import async_validate_findings
+
+            validated_findings = await async_validate_findings(
+                output.findings, decision, self._backend,
+            )
+        else:
+            validated_findings = output.findings
+
+        target_phase = _resolve_request_changes_target(
+            decision, output.confidence_score, req.phase.request_changes_routing,
         )
 
         chosen_next: str | None = None
@@ -630,12 +832,13 @@ class AsyncLLMReviewerRole(_LLMRoleBase[AsyncLLMBackend], AsyncReviewer):
                 confidence_score=output.confidence_score,
                 counts_verified=output.counts_verified,
                 summary=output.summary,
-                findings=output.findings,
+                findings=validated_findings,
                 target_phase=target_phase,
                 gate_override_reason=gate_override_reason,
             ),
             chosen_next=chosen_next,
-            usage=structured.last_usage,
+            usage=self.last_usage,
+            recovery=recovery_meta,
         )
 
 

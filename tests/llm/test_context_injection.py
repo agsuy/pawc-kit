@@ -7,7 +7,7 @@ from pawc_kit.contracts.config import ContextInjectionConfig
 from pawc_kit.contracts.execution import ContextPayload
 from pawc_kit.llm.compressor import MarkdownCompressor, PassthroughCompressor
 from pawc_kit.llm.prompts import DefaultPromptAssembler, discovery_section, request_section
-from pawc_kit.ports.compressor import ContextCompressor
+from pawc_kit.ports.compressor import CompressionResult, ContextCompressor
 from tests.llm.conftest import make_exec_ctx, make_review_ctx
 
 
@@ -33,13 +33,13 @@ def _pack(
 
 def test_request_section_empty_pack_returns_empty() -> None:
     ctx = make_exec_ctx(context=ContextPayload.empty())
-    assert request_section(ctx) == ""
+    assert request_section(ctx) == ("", [])
 
 
 def test_request_section_includes_request_files() -> None:
     pack = _pack(request_files={"prompt.md": "Build something great"})
     ctx = make_exec_ctx(context=pack)
-    section = request_section(ctx)
+    section, _ = request_section(ctx)
     assert "## Request Context" in section
     assert "prompt.md" in section
     assert "Build something great" in section
@@ -49,14 +49,14 @@ def test_request_section_include_request_files_false_returns_empty() -> None:
     pack = _pack(request_files={"prompt.md": "content"})
     ctx = make_exec_ctx(context=pack)
     cfg = ContextInjectionConfig(include_request_files=False)
-    assert request_section(ctx, cfg) == ""
+    assert request_section(ctx, cfg) == ("", [])
 
 
 def test_request_section_file_allowlist_filters_others() -> None:
     pack = _pack(request_files={"allowed.md": "yes", "blocked.md": "no"})
     ctx = make_exec_ctx(context=pack)
     cfg = ContextInjectionConfig(file_allowlist=["allowed.md"])
-    section = request_section(ctx, cfg)
+    section, _ = request_section(ctx, cfg)
     assert "allowed.md" in section
     assert "blocked.md" not in section
 
@@ -65,7 +65,7 @@ def test_request_section_file_blocklist_excludes_matching() -> None:
     pack = _pack(request_files={"keep.md": "keep", "skip.md": "skip"})
     ctx = make_exec_ctx(context=pack)
     cfg = ContextInjectionConfig(file_blocklist=["skip.md"])
-    section = request_section(ctx, cfg)
+    section, _ = request_section(ctx, cfg)
     assert "keep.md" in section
     assert "skip.md" not in section
 
@@ -75,7 +75,7 @@ def test_request_section_include_children_true_includes_child_files() -> None:
     pack = _pack("root", children=[child])
     ctx = make_exec_ctx(context=pack)
     cfg = ContextInjectionConfig(include_children=True)
-    section = request_section(ctx, cfg)
+    section, _ = request_section(ctx, cfg)
     assert "child.md" in section
     assert "child-ctx" in section
 
@@ -85,7 +85,7 @@ def test_request_section_include_children_false_excludes_child_files() -> None:
     pack = _pack("root", children=[child])
     ctx = make_exec_ctx(context=pack)
     cfg = ContextInjectionConfig(include_children=False)
-    section = request_section(ctx, cfg)
+    section, _ = request_section(ctx, cfg)
     assert "child.md" not in section
 
 
@@ -94,14 +94,14 @@ def test_request_section_max_file_chars_truncates_content() -> None:
     pack = _pack(request_files={"long.md": long_content})
     ctx = make_exec_ctx(context=pack)
     cfg = ContextInjectionConfig(max_file_chars=100)
-    section = request_section(ctx, cfg)
+    section, _ = request_section(ctx, cfg)
     assert "[truncated" in section
 
 
 def test_request_section_with_passthrough_compressor_returns_content_unchanged() -> None:
     pack = _pack(request_files={"f.md": "raw content"})
     ctx = make_exec_ctx(context=pack)
-    section = request_section(ctx, compressor=PassthroughCompressor())
+    section, _ = request_section(ctx, compressor=PassthroughCompressor())
     assert "raw content" in section
 
 
@@ -172,7 +172,7 @@ def test_discovery_sections_config_controls_what_is_included() -> None:
 def test_executor_prompts_includes_request_section_when_pack_has_files() -> None:
     pack = _pack(request_files={"spec.md": "Build a widget"})
     ctx = make_exec_ctx(context=pack)
-    _, user = DefaultPromptAssembler().executor_prompts(ctx)
+    _, user, _plans = DefaultPromptAssembler().executor_prompts(ctx)
     assert "## Request Context" in user
     assert "spec.md" in user
 
@@ -180,7 +180,7 @@ def test_executor_prompts_includes_request_section_when_pack_has_files() -> None
 def test_executor_prompts_includes_discovery_section_when_handoff_present() -> None:
     pack = _pack(discovery_handoff=HandoffContext(summary="Discovery complete"))
     ctx = make_exec_ctx(context=pack)
-    _, user = DefaultPromptAssembler().executor_prompts(ctx)
+    _, user, _plans = DefaultPromptAssembler().executor_prompts(ctx)
     assert "## Discovery Background" in user
     assert "Discovery complete" in user
 
@@ -188,13 +188,13 @@ def test_executor_prompts_includes_discovery_section_when_handoff_present() -> N
 def test_reviewer_prompts_includes_request_section() -> None:
     pack = _pack(request_files={"criteria.md": "Review these criteria"})
     ctx = make_review_ctx(context=pack)
-    _, user = DefaultPromptAssembler().reviewer_prompts(ctx)
+    _, user, _plans = DefaultPromptAssembler().reviewer_prompts(ctx)
     assert "criteria.md" in user
 
 
 def test_executor_prompts_empty_pack_no_context_sections() -> None:
     ctx = make_exec_ctx(context=ContextPayload.empty())
-    _, user = DefaultPromptAssembler().executor_prompts(ctx)
+    _, user, _plans = DefaultPromptAssembler().executor_prompts(ctx)
     assert "## Request Context" not in user
     assert "## Discovery Background" not in user
 
@@ -207,44 +207,47 @@ def test_executor_prompts_empty_pack_no_context_sections() -> None:
 def test_markdown_compressor_strips_html_comments() -> None:
     text = "Hello <!-- this is a comment --> World"
     result = MarkdownCompressor().compress(text)
-    assert "<!--" not in result
-    assert "Hello" in result
-    assert "World" in result
+    assert "<!--" not in result.content
+    assert "Hello" in result.content
+    assert "World" in result.content
 
 
 def test_markdown_compressor_strips_frontmatter() -> None:
     text = "---\ntitle: Test\n---\n# Heading"
     result = MarkdownCompressor().compress(text)
-    assert "title: Test" not in result
-    assert "Heading" in result
+    assert "title: Test" not in result.content
+    assert "Heading" in result.content
 
 
 def test_markdown_compressor_collapses_long_code_blocks() -> None:
     lines = "\n".join(f"line {i}" for i in range(20))
     text = f"```python\n{lines}\n```"
     result = MarkdownCompressor(max_code_lines=4).compress(text)
-    assert "[..." in result
-    assert "lines ..." in result
+    assert "[..." in result.content
+    assert "lines ..." in result.content
 
 
 def test_markdown_compressor_short_code_block_unchanged() -> None:
     text = "```python\na = 1\nb = 2\n```"
     result = MarkdownCompressor(max_code_lines=6).compress(text)
-    assert "a = 1" in result
-    assert "b = 2" in result
+    assert "a = 1" in result.content
+    assert "b = 2" in result.content
 
 
-def test_markdown_compressor_max_chars_truncates() -> None:
+def test_markdown_compressor_budget_truncates() -> None:
     text = "x" * 500
-    result = MarkdownCompressor().compress(text, max_chars=100)
-    assert len(result) <= 150  # truncation marker adds a few chars
-    assert "[truncated at 100 chars]" in result
+    result = MarkdownCompressor().compress(text, budget=100)
+    assert "[truncated at 100 chars; original 500 chars]" in result.content
+    assert result.truncated is True
+    assert result.original_chars == 500
+    assert result.layers_applied == ["markdown"]
 
 
 def test_markdown_compressor_short_text_unchanged() -> None:
     text = "Short text."
     result = MarkdownCompressor().compress(text)
-    assert result == "Short text."
+    assert result.content == "Short text."
+    assert result.truncated is False
 
 
 # ---------------------------------------------------------------------------
@@ -254,13 +257,18 @@ def test_markdown_compressor_short_text_unchanged() -> None:
 
 def test_passthrough_compressor_returns_content_unchanged() -> None:
     text = "# Hello\n\nThis is unchanged."
-    assert PassthroughCompressor().compress(text) == text
+    result = PassthroughCompressor().compress(text)
+    assert result.content == text
+    assert result.layers_applied == []
+    assert result.truncated is False
 
 
-def test_passthrough_compressor_truncates_at_max_chars() -> None:
+def test_passthrough_compressor_truncates_at_budget() -> None:
     text = "x" * 200
-    result = PassthroughCompressor().compress(text, max_chars=50)
-    assert "[truncated at 50 chars]" in result
+    result = PassthroughCompressor().compress(text, budget=50)
+    assert "[truncated at 50 chars; original 200 chars]" in result.content
+    assert result.truncated is True
+    assert result.original_chars == 200
 
 
 # ---------------------------------------------------------------------------
@@ -278,8 +286,19 @@ def test_passthrough_compressor_satisfies_protocol() -> None:
 
 def test_custom_compressor_satisfies_protocol() -> None:
     class _NoOp:
-        def compress(self, content: str, *, max_chars: int | None = None) -> str:
-            return content
+        def compress(
+            self,
+            content: str,
+            *,
+            budget: int | None = None,
+            filename: str | None = None,
+            content_type: str | None = None,
+        ) -> CompressionResult:
+            return CompressionResult(
+                content=content,
+                original_chars=len(content),
+                compressed_chars=len(content),
+            )
 
     assert isinstance(_NoOp(), ContextCompressor)
 

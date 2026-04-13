@@ -5,15 +5,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from pydantic import BaseModel
-
     from pawc_kit.contracts.config import (
         ContextInjectionConfig,
         EfficiencyConfig,
         RoleConfig,
     )
     from pawc_kit.contracts.execution import ExecutionRequest, ReviewRequest
-    from pawc_kit.ports.compressor import ContextCompressor
+    from pawc_kit.ports.compressor import ContextCompressor, SplitPlan
 
 
 @runtime_checkable
@@ -23,6 +21,10 @@ class PromptAssembler(Protocol):
     Implementations control how workflow context, role configuration, schema
     instructions, and injected files are serialized into the two strings that
     an LLM backend receives.
+
+    Returns ``(system, user, split_plans)`` where *split_plans* contains
+    ``SplitPlan`` instances for files that exceeded budget and were split
+    by the compression pipeline (lossless quality-mode overflow).
 
     The default implementation is
     :class:`~pawc_kit.llm.prompts.DefaultPromptAssembler`.
@@ -44,9 +46,7 @@ class PromptAssembler(Protocol):
         efficiency: EfficiencyConfig | None = None,
         injection: ContextInjectionConfig | None = None,
         compressor: ContextCompressor | None = None,
-        skip_schema: bool = False,
-        output_model: type[BaseModel] | None = None,
-    ) -> tuple[str, str]: ...
+    ) -> tuple[str, str, list[SplitPlan]]: ...
 
     def reviewer_prompts(
         self,
@@ -58,9 +58,7 @@ class PromptAssembler(Protocol):
         efficiency: EfficiencyConfig | None = None,
         injection: ContextInjectionConfig | None = None,
         compressor: ContextCompressor | None = None,
-        skip_schema: bool = False,
-        output_model: type[BaseModel] | None = None,
-    ) -> tuple[str, str]: ...
+    ) -> tuple[str, str, list[SplitPlan]]: ...
 
 
 __all__ = ["PromptAssembler"]

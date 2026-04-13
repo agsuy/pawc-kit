@@ -9,7 +9,7 @@ from pawc_kit.ports.artifacts import (
     AsyncArtifactWriter,
 )
 from pawc_kit.ports.clock import AsyncClock, Clock
-from pawc_kit.ports.compressor import ContextCompressor
+from pawc_kit.ports.compressor import CompressionLayer, CompressionResult, ContextCompressor
 from pawc_kit.ports.controller import RunController, RunSignal
 from pawc_kit.ports.invoker import AsyncRoleInvoker, RoleInvoker
 from pawc_kit.ports.observers import AsyncWorkflowObserver, WorkflowObserver
@@ -35,6 +35,8 @@ __all__ = [
     "AsyncArtifactReader",
     "AsyncArtifactStore",
     "AsyncArtifactWriter",
+    "CompressionLayer",
+    "CompressionResult",
     "AsyncClock",
     "AsyncResolvedBackend",
     "AsyncRoleInvoker",

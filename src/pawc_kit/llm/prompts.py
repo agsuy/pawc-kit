@@ -4,21 +4,31 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import logging
 from typing import TYPE_CHECKING, get_args, get_origin
 
 from pydantic import BaseModel
 
 from pawc_kit.contracts.config import (
-    CompressionConfig,
     ContextInjectionConfig,
     EfficiencyConfig,
     RoleConfig,
 )
 from pawc_kit.contracts.errors import ConfigurationError
 
+from pawc_kit.ports.compressor import SplitPlan
+
 if TYPE_CHECKING:
+    from pawc_kit.contracts.artifacts import HandoffPart
     from pawc_kit.contracts.execution import ExecutionRequest, ReviewRequest
     from pawc_kit.ports.compressor import ContextCompressor
+    from pawc_kit.workflow.graph import PhaseDefinition
+
+_logger = logging.getLogger("pawc_kit.llm.prompts")
+
+MIN_PER_FILE_CHARS = 2000
+"""Floor for proportional allocation — even the smallest file gets at least
+this many characters of budget."""
 
 
 # ---------------------------------------------------------------------------
@@ -26,22 +36,61 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_compressor(config: CompressionConfig) -> ContextCompressor:
-    """Instantiate the right compressor from a CompressionConfig.
+def _resolve_compressor(
+    injection: ContextInjectionConfig,
+    section_sink: object | None = None,
+) -> ContextCompressor:
+    """Build a ``CompressionPipeline`` from the injection config's strategy.
 
-    An explicitly passed compressor kwarg always wins over this factory.
+    An explicitly passed *compressor* kwarg always wins over this factory.
+
+    Strategy → pipeline mapping:
+
+    - ``lossless``:  [LosslessLayer]
+    - ``balanced``:  [LosslessLayer, DataFormatLayer, PrioritySelection,
+      LosslessLayer(cleanup), AdaptiveCompressionLayer]
+    - ``compact``:   same layers, more aggressive thresholds
+    - ``full``:      same layers, most aggressive thresholds
+
+    ``section_sink`` is passed through to the pipeline for persistence of
+    scored sections.  ``None`` disables section emission.
+
+    Falls back to ``compression.mode`` for backward compatibility:
+    ``mode="none"`` → empty pipeline (passthrough).
     """
-    if config.mode == "none":
-        from pawc_kit.llm.compressor import PassthroughCompressor
+    from pawc_kit.llm.layers import (
+        AdaptiveCompressionLayer,
+        CompressionPipeline,
+        DataFormatLayer,
+        LosslessLayer,
+        PrioritySelectionLayer,
+        SectionScoringLayer,
+    )
 
-        return PassthroughCompressor()
-    if config.mode == "semantic":
-        from pawc_kit.llm.compressor import SemanticCompressor
+    if injection.compression.mode == "none":
+        return CompressionPipeline([], strategy="lossless")
 
-        return SemanticCompressor(config)
-    from pawc_kit.llm.compressor import MarkdownCompressor
+    strategy = injection.strategy
+    eager = injection.compression.data_format.eager and strategy != "lossless"
 
-    return MarkdownCompressor()
+    if strategy == "lossless":
+        layers = [LosslessLayer(), SectionScoringLayer()]
+    else:
+        layers = [
+            LosslessLayer(),
+            DataFormatLayer(eager=eager),
+            PrioritySelectionLayer(),
+            LosslessLayer(name="lossless_cleanup"),
+            AdaptiveCompressionLayer(strategy=strategy),
+        ]
+
+    return CompressionPipeline(
+        layers,
+        strategy=strategy,
+        truncation_hint=injection.truncation_hint,
+        section_sink=section_sink,
+        overflow=injection.overflow,
+    )
 
 
 def _role_finding_categories_list(role_config: RoleConfig | None) -> list[str] | None:
@@ -338,26 +387,68 @@ def schema_instructions(model: type[BaseModel]) -> str:
     )
 
 
+def _compute_per_file_budgets(
+    files: list[tuple[str, str]],
+    injection: ContextInjectionConfig,
+) -> dict[str, int | None]:
+    """Compute per-file character budgets using proportional allocation.
+
+    When ``context_budget`` is set (server computed it from the model's
+    context window), each file gets a share proportional to its raw size
+    relative to all files.  When ``context_budget`` is None (local model,
+    no context_window known), returns None budgets (no enforcement).
+
+    Proportional allocation ensures every file is compressed by roughly
+    the same ratio rather than small files getting unlimited space while
+    large files get crushed.
+    """
+    budget = injection.context_budget
+
+    if budget is None:
+        return {name: injection.max_file_chars for name, _ in files}
+
+    total_raw = sum(len(content) for _, content in files)
+
+    if total_raw <= budget.total_file_chars:
+        return {name: None for name, _ in files}
+
+    per_file: dict[str, int | None] = {}
+    for name, content in files:
+        share = len(content) / total_raw
+        allocation = int(share * budget.total_file_chars)
+        allocation = max(allocation, MIN_PER_FILE_CHARS)
+        if budget.per_file_ceiling is not None:
+            allocation = min(allocation, budget.per_file_ceiling)
+        per_file[name] = allocation
+    return per_file
+
+
 def request_section(
     ctx: ExecutionRequest | ReviewRequest,
     injection: ContextInjectionConfig | None = None,
     compressor: ContextCompressor | None = None,
-) -> str:
+) -> tuple[str, list[SplitPlan]]:
     """Build the request files section from the context pack.
 
     Collects request files from the parent pack and (when enabled) from
-    scoped children, applies allowlist/blocklist filtering, compresses each
-    file, and formats the result.
+    scoped children, applies allowlist/blocklist filtering, computes
+    proportional per-file budgets, compresses each file, and formats the
+    result.
+
+    Returns ``(section_text, split_plans)`` where *split_plans* contains
+    a ``SplitPlan`` for each file that the compression pipeline split
+    (lossless quality-mode overflow).  Empty when all files fit.
     """
     cfg = injection or ContextInjectionConfig()
     if not cfg.include_request_files:
-        return ""
+        return "", []
 
     pack = ctx.context
     if not pack.request_files and not pack.children:
-        return ""
+        return "", []
 
-    comp = compressor or _resolve_compressor(cfg.compression)
+    comp = compressor or _resolve_compressor(cfg)
+    split_plans: list[SplitPlan] = []
 
     def _should_include(filename: str) -> bool:
         if cfg.file_blocklist:
@@ -368,28 +459,152 @@ def request_section(
             return any(fnmatch.fnmatch(filename, p) for p in cfg.file_allowlist)
         return True
 
-    def _compress(text: str) -> str:
-        return comp.compress(text, max_chars=cfg.max_file_chars)
+    # Collect eligible files for budget allocation
+    eligible: list[tuple[str, str]] = []
+    for filename, content in pack.request_files.items():
+        if _should_include(filename):
+            eligible.append((filename, content))
+    if cfg.include_children:
+        for child in pack.children:
+            for filename, content in child.request_files.items():
+                if _should_include(filename):
+                    eligible.append((filename, content))
+
+    if not eligible:
+        return "", []
+
+    budgets = _compute_per_file_budgets(eligible, cfg)
 
     parts: list[str] = ["## Request Context"]
 
     for filename, content in pack.request_files.items():
         if not _should_include(filename):
             continue
+        file_budget = budgets.get(filename)
+        result = comp.compress(content, budget=file_budget, filename=filename)
+        text = result.content
+        if result.exceeded_budget and file_budget is not None:
+            if result.split_plan:
+                split_plans.append(result.split_plan)
+                text = text[:file_budget] + (
+                    f"\n[split into {len(result.split_plan.batches)} batches"
+                    f"; original {result.original_chars} chars]"
+                )
+            else:
+                text = text[:file_budget] + (
+                    f"\n[truncated at {file_budget} chars"
+                    f"; original {result.original_chars} chars]"
+                )
         parts.append(f"\n### {filename}")
-        parts.append(_compress(content))
+        parts.append(text)
+        if result.truncated or result.exceeded_budget:
+            _logger.info(
+                "Compressed %s: %d → %d chars (layers: %s, truncated: %s)",
+                filename,
+                result.original_chars,
+                result.compressed_chars,
+                result.layers_applied,
+                result.truncated,
+            )
 
     if cfg.include_children:
         for child in pack.children:
             for filename, content in child.request_files.items():
                 if not _should_include(filename):
                     continue
+                file_budget = budgets.get(filename)
+                result = comp.compress(content, budget=file_budget, filename=filename)
+                text = result.content
+                if result.exceeded_budget and file_budget is not None:
+                    if result.split_plan:
+                        split_plans.append(result.split_plan)
+                        text = text[:file_budget] + (
+                            f"\n[split into {len(result.split_plan.batches)} batches"
+                            f"; original {result.original_chars} chars]"
+                        )
+                    else:
+                        text = text[:file_budget] + (
+                            f"\n[truncated at {file_budget} chars"
+                            f"; original {result.original_chars} chars]"
+                        )
                 parts.append(f"\n### {filename} (from: {child.context_id})")
-                parts.append(_compress(content))
+                parts.append(text)
+                if result.truncated or result.exceeded_budget:
+                    _logger.info(
+                        "Compressed %s (from: %s): %d �� %d chars (layers: %s)",
+                        filename,
+                        child.context_id,
+                        result.original_chars,
+                        result.compressed_chars,
+                        result.layers_applied,
+                    )
 
     if len(parts) == 1:
-        return ""
-    return "\n".join(parts)
+        return "", []
+    return "\n".join(parts), split_plans
+
+
+def _render_handoff_parts(
+    parts: list[HandoffPart],
+    compressor: ContextCompressor,
+    budget: int | None,
+) -> str:
+    """Render typed parts with priority-aware filtering.
+
+    Two-pass approach — policy decides WHAT (passthrough/compress/drop),
+    renderer decides HOW MUCH (remaining budget allocated to compressed parts).
+    """
+    from pawc_kit.llm.policy import compute_pressure, resolve_action
+
+    total_chars = sum(len(p.content) for p in parts)
+    pressure = compute_pressure(total_chars, budget) if budget else "none"
+
+    # Pass 1: resolve actions, tally sizes
+    actions: list[tuple[HandoffPart, str]] = []
+    passthrough_chars = 0
+    compress_parts_chars = 0
+    dropped = 0
+    for hp in parts:
+        action = resolve_action(hp.priority, pressure)
+        if action == "drop":
+            dropped += 1
+            continue
+        actions.append((hp, action))
+        if action == "passthrough" or not hp.compressible:
+            passthrough_chars += len(hp.content)
+        else:
+            compress_parts_chars += len(hp.content)
+
+    # Pass 2: compute per-part budgets for compressed parts
+    remaining_budget = max(0, budget - passthrough_chars) if budget else None
+
+    lines: list[str] = []
+    for hp, action in actions:
+        if action == "compress" and hp.compressible and remaining_budget is not None:
+            share = len(hp.content) / compress_parts_chars if compress_parts_chars else 1.0
+            part_budget = int(share * remaining_budget)
+            result = compressor.compress(hp.content, budget=part_budget, content_type=hp.part_type)
+            content = result.content
+        else:
+            content = hp.content
+
+        label = f"[{hp.priority}][{hp.part_type}]"
+        if hp.part_type == "code":
+            lang = (hp.metadata or {}).get("language", "")
+            lines.append(f"{label}")
+            lines.append(f"```{lang}")
+            lines.append(content)
+            lines.append("```")
+        elif hp.part_type == "structured":
+            lines.append(f"{label}")
+            lines.append(content)
+        else:
+            lines.append(f"{label} {content}")
+
+    if dropped:
+        lines.append(f"\n[{dropped} supplementary parts omitted]")
+
+    return "\n".join(lines)
 
 
 def discovery_section(
@@ -406,13 +621,29 @@ def discovery_section(
     if handoff is None:
         return ""
 
-    comp = compressor or _resolve_compressor(cfg.compression)
+    comp = compressor or _resolve_compressor(cfg)
     sections = set(cfg.discovery_sections)
 
     parts: list[str] = ["## Discovery Background"]
 
     if "summary" in sections and handoff.summary:
-        parts.append(comp.compress(handoff.summary, max_chars=cfg.max_file_chars))
+        summary_text = handoff.summary
+        cap = cfg.max_discovery_summary_chars
+        if cap is not None and len(summary_text) > cap:
+            summary_text = summary_text[:cap] + "..."
+        summary_budget = cfg.max_file_chars
+        if cfg.context_budget is not None:
+            summary_budget = cfg.context_budget.per_file_ceiling or cfg.context_budget.total_file_chars
+        parts.append(comp.compress(summary_text, budget=summary_budget).content)
+
+    if handoff.parts:
+        section_budget = None
+        if cfg.context_budget:
+            section_budget = cfg.context_budget.per_file_ceiling or cfg.context_budget.total_file_chars
+        rendered = _render_handoff_parts(handoff.parts, comp, section_budget)
+        if rendered:
+            parts.append("\n### Typed Findings")
+            parts.append(rendered)
 
     if "key_artifacts" in sections and handoff.key_artifacts:
         parts.append("\nReferenced artifacts:")
@@ -434,6 +665,74 @@ def discovery_section(
     return "\n".join(parts)
 
 
+def discovery_files_section(
+    ctx: ExecutionRequest | ReviewRequest,
+    injection: ContextInjectionConfig | None = None,
+    compressor: ContextCompressor | None = None,
+) -> str:
+    """Build the discovery files section from the context pack."""
+    cfg = injection or ContextInjectionConfig()
+    files = ctx.context.discovery_files
+    if not files:
+        return ""
+    comp = compressor or _resolve_compressor(cfg)
+    parts: list[str] = ["## Discovery Files"]
+    for name, content in files.items():
+        result = comp.compress(content, filename=name)
+        parts.append(f"\n### {name}")
+        parts.append(result.content)
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Handoff guidance
+# ---------------------------------------------------------------------------
+
+_DEFAULT_HANDOFF_GUIDANCE = (
+    "Structure your handoff for downstream consumption:\n"
+    "- Separate critical findings from supporting evidence\n"
+    "- Put the most important information first\n"
+    "- Use bullet points over prose paragraphs\n"
+    "- Reference source material by identifier rather than quoting in full\n"
+    "- Group findings by theme or category"
+)
+
+_DEFAULT_REVIEWER_CONCISENESS = (
+    "Be concise. Keep summaries to 1-2 sentences. Keep descriptions under 50 words."
+)
+
+
+def _handoff_guidance_section(
+    efficiency: EfficiencyConfig | None,
+    phase: PhaseDefinition | None = None,
+) -> str | None:
+    """Build handoff structure guidance for executor prompts.
+
+    Priority: phase.handoff_guidance_text > efficiency.handoff_guidance.guidance_text > default.
+    Budget hint: phase.inject_budget_hint > efficiency.handoff_guidance.inject_budget_hint.
+    """
+    if efficiency is None:
+        return None
+    cfg = efficiency.handoff_guidance
+    if not cfg.enabled:
+        return None
+    parts: list[str] = []
+    phase_guidance = phase.handoff_guidance_text if phase else None
+    parts.append(phase_guidance or cfg.guidance_text or _DEFAULT_HANDOFF_GUIDANCE)
+    hint_enabled = (
+        phase.inject_budget_hint
+        if (phase and phase.inject_budget_hint is not None)
+        else cfg.inject_budget_hint
+    )
+    if hint_enabled and cfg.downstream_budget_tokens is not None:
+        tokens = cfg.downstream_budget_tokens
+        parts.append(
+            f"\nYour handoff's budget in the downstream phase is ~{tokens:,} tokens. "
+            f"Target keeping your handoff summary within that budget."
+        )
+    return "\n".join(parts)
+
+
 # ---------------------------------------------------------------------------
 # DefaultPromptAssembler (implements PromptAssembler protocol)
 # ---------------------------------------------------------------------------
@@ -450,14 +749,7 @@ class DefaultPromptAssembler:
         efficiency: EfficiencyConfig | None = None,
         injection: ContextInjectionConfig | None = None,
         compressor: ContextCompressor | None = None,
-        skip_schema: bool = False,
-        output_model: type[BaseModel] | None = None,
-    ) -> tuple[str, str]:
-        if output_model is None:
-            from pawc_kit.llm.roles import ExecutorOutput
-
-            output_model = ExecutorOutput
-
+    ) -> tuple[str, str, list[SplitPlan]]:
         system_parts = []
         role = role_section(role_config)
         if role:
@@ -466,28 +758,29 @@ class DefaultPromptAssembler:
             "You are an executor phase in a PAWC workflow. "
             "Produce your work output including a confidence self-assessment."
         )
-        if not skip_schema:
-            schema_fmt = efficiency.schema_format if efficiency else "full"
-            if schema_fmt == "full":
-                system_parts.append(schema_instructions(output_model))
-            elif schema_fmt == "abbreviated":
-                system_parts.append(abbreviated_schema(output_model))
-        if efficiency and efficiency.output_budget:
-            system_parts.append(
-                "Be concise. Keep summaries to 1-2 sentences. Keep descriptions under 50 words."
-            )
+        from pawc_kit.llm.md_output import EXECUTOR_FORMAT_INSTRUCTIONS, TYPED_PARTS_INSTRUCTIONS
+
+        system_parts.append(EXECUTOR_FORMAT_INSTRUCTIONS)
+        if ctx.phase and ctx.phase.handoff_mode == "typed":
+            system_parts.append(TYPED_PARTS_INSTRUCTIONS)
+        guidance = _handoff_guidance_section(efficiency, ctx.phase)
+        if guidance:
+            system_parts.append(guidance)
         system = "\n\n".join(system_parts)
 
         user_parts = [context_section(ctx, efficiency)]
-        req = request_section(ctx, injection, compressor)
-        if req:
-            user_parts.append(req)
+        req_text, split_plans = request_section(ctx, injection, compressor)
+        if req_text:
+            user_parts.append(req_text)
         disc = discovery_section(ctx, injection, compressor)
         if disc:
             user_parts.append(disc)
+        disc_files = discovery_files_section(ctx, injection, compressor)
+        if disc_files:
+            user_parts.append(disc_files)
         user_parts.append("\nProduce your deliverables.")
         user = "\n\n".join(user_parts)
-        return system, user
+        return system, user, split_plans
 
     def reviewer_prompts(
         self,
@@ -499,9 +792,7 @@ class DefaultPromptAssembler:
         efficiency: EfficiencyConfig | None = None,
         injection: ContextInjectionConfig | None = None,
         compressor: ContextCompressor | None = None,
-        skip_schema: bool = False,
-        output_model: type[BaseModel] | None = None,
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, list[SplitPlan]]:
         """Build reviewer system/user prompts.
 
         Finding categories: non-empty ``finding_categories`` on ``role_config``
@@ -511,11 +802,6 @@ class DefaultPromptAssembler:
         workflow-level list from the template invoker. Uses the resolved
         ``role_config`` passed in (including any phase ``role_overrides`` merge).
         """
-        if output_model is None:
-            from pawc_kit.llm.roles import ReviewerOutput
-
-            output_model = ReviewerOutput
-
         system_parts = []
         role = role_section(role_config)
         if role:
@@ -539,34 +825,41 @@ class DefaultPromptAssembler:
                 "Finding categories (use only these category names for findings when applicable): "
                 f"{joined}."
             )
-        if not skip_schema:
-            schema_fmt = efficiency.schema_format if efficiency else "full"
-            if schema_fmt == "full":
-                system_parts.append(schema_instructions(output_model))
-            elif schema_fmt == "abbreviated":
-                system_parts.append(abbreviated_schema(output_model))
-        if efficiency and efficiency.output_budget:
+        from pawc_kit.llm.md_output import REVIEWER_FORMAT_INSTRUCTIONS
+
+        system_parts.append(REVIEWER_FORMAT_INSTRUCTIONS)
+        system_parts.append(
+            "Before finalizing your response, verify your findings:\n"
+            "1. Count your findings by severity.\n"
+            "2. Compare against what you listed in the FINDINGS section.\n"
+            "3. If the counts don't match, fix your FINDINGS section.\n"
+            "4. Set COUNTS_VERIFIED to true only if the counts match."
+        )
+        if efficiency and efficiency.handoff_guidance.enabled:
+            phase_guidance = ctx.phase.handoff_guidance_text if ctx.phase else None
             system_parts.append(
-                "Be concise. Keep summaries to 1-2 sentences. Keep descriptions under 50 words."
+                phase_guidance
+                or efficiency.handoff_guidance.guidance_text
+                or _DEFAULT_REVIEWER_CONCISENESS
             )
         system = "\n\n".join(system_parts)
 
         user_parts = [context_section(ctx, efficiency)]
-        req = request_section(ctx, injection, compressor)
-        if req:
-            user_parts.append(req)
+        req_text, split_plans = request_section(ctx, injection, compressor)
+        if req_text:
+            user_parts.append(req_text)
         disc = discovery_section(ctx, injection, compressor)
         if disc:
             user_parts.append(disc)
-        if ctx.request_change_targets:
-            user_parts.append(
-                "\nCan request changes from: " + ", ".join(ctx.request_change_targets)
-            )
+        disc_files = discovery_files_section(ctx, injection, compressor)
+        if disc_files:
+            user_parts.append(disc_files)
+        # request_change_targets no longer surfaced — engine owns routing
         if ctx.approval_targets:
             user_parts.append(f"On approve targets: {', '.join(ctx.approval_targets)}")
         user_parts.append("\nEvaluate the work and produce your decision.")
         user = "\n\n".join(user_parts)
-        return system, user
+        return system, user, split_plans
 
 
 __all__ = [

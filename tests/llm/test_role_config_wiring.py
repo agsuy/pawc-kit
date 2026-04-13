@@ -5,34 +5,29 @@ from __future__ import annotations
 import asyncio
 
 from pawc_kit.contracts import RoleConfig
-from pawc_kit.contracts.artifacts import HandoffContext
 from pawc_kit.llm.mock import AsyncMockBackend, MockBackend
 from pawc_kit.llm.roles import (
     AsyncLLMExecutorRole,
     AsyncLLMReviewerRole,
-    ExecutorOutput,
     LLMExecutorRole,
     LLMReviewerRole,
-    ReviewerOutput,
 )
 from tests.llm.conftest import make_exec_ctx, make_review_ctx
 
 
-def _executor_json() -> ExecutorOutput:
-    return ExecutorOutput(
-        confidence_score=90,
-        summary="Done",
-        handoff=HandoffContext(summary="handoff"),
-    )
+def _sec(name: str, content: str = "") -> str:
+    return f'<pawc-section name="{name}">{content}</pawc-section>'
 
 
-def _reviewer_json(decision: str = "APPROVE") -> ReviewerOutput:
-    return ReviewerOutput(
-        decision=decision,  # type: ignore[arg-type]
-        confidence_score=88,
-        counts_verified=True,
-        summary="Good",
-        findings=[],
+def _executor_md() -> str:
+    return _sec("CONFIDENCE", "\n90\n") + _sec("SUMMARY", "\nDone\n") + _sec("HANDOFF", "\nhandoff\n") + _sec("ARTIFACTS")
+
+
+def _reviewer_md() -> str:
+    return (
+        _sec("DECISION", "\nAPPROVE\n") + _sec("CONFIDENCE", "\n88\n")
+        + _sec("COUNTS_VERIFIED", "\ntrue\n") + _sec("SUMMARY", "\nGood\n")
+        + _sec("FINDINGS") + _sec("TARGET_PHASE")
     )
 
 
@@ -44,7 +39,7 @@ def _reviewer_json(decision: str = "APPROVE") -> ReviewerOutput:
 class TestSyncExecutorRoleConfigInPrompt:
     def test_role_config_fields_appear_in_system_prompt(self) -> None:
         backend = MockBackend()
-        backend.queue_model(_executor_json())
+        backend.queue(_executor_md())
         cfg = RoleConfig(
             name="Alpha Executor",
             version="0.1.0",
@@ -61,7 +56,7 @@ class TestSyncExecutorRoleConfigInPrompt:
 
     def test_empty_role_configs_omit_role_section(self) -> None:
         backend = MockBackend()
-        backend.queue_model(_executor_json())
+        backend.queue(_executor_md())
         role = LLMExecutorRole(backend, role_configs={})
         role.execute(make_exec_ctx())
 
@@ -70,7 +65,7 @@ class TestSyncExecutorRoleConfigInPrompt:
 
     def test_last_prompt_attributes_match_backend(self) -> None:
         backend = MockBackend()
-        backend.queue_model(_executor_json())
+        backend.queue(_executor_md())
         cfg = RoleConfig(name="Exec", version="0.1.0")
         role = LLMExecutorRole(backend, role_configs={"worker-role": cfg})
         role.execute(make_exec_ctx())
@@ -87,7 +82,7 @@ class TestSyncExecutorRoleConfigInPrompt:
 class TestSyncReviewerRoleConfigInPrompt:
     def test_role_config_fields_appear_in_system_prompt(self) -> None:
         backend = MockBackend()
-        backend.queue_model(_reviewer_json())
+        backend.queue(_reviewer_md())
         cfg = RoleConfig(
             name="Quality Reviewer",
             version="0.2.0",
@@ -103,7 +98,7 @@ class TestSyncReviewerRoleConfigInPrompt:
 
     def test_last_prompt_attributes_match_backend(self) -> None:
         backend = MockBackend()
-        backend.queue_model(_reviewer_json())
+        backend.queue(_reviewer_md())
         cfg = RoleConfig(name="Rev", version="0.1.0")
         role = LLMReviewerRole(backend, role_configs={"reviewer-role": cfg})
         role.review(make_review_ctx())
@@ -120,7 +115,7 @@ class TestSyncReviewerRoleConfigInPrompt:
 class TestAsyncExecutorRoleConfigInPrompt:
     def test_role_config_fields_appear_in_system_prompt(self) -> None:
         backend = AsyncMockBackend()
-        backend.queue_model(_executor_json())
+        backend.queue(_executor_md())
         cfg = RoleConfig(
             name="Async Executor",
             version="1.0.0",
@@ -137,7 +132,7 @@ class TestAsyncExecutorRoleConfigInPrompt:
 
     def test_last_prompt_attributes_match_backend(self) -> None:
         backend = AsyncMockBackend()
-        backend.queue_model(_executor_json())
+        backend.queue(_executor_md())
         cfg = RoleConfig(name="AExec", version="0.1.0")
         role = AsyncLLMExecutorRole(backend, role_configs={"worker-role": cfg})
         asyncio.run(role.execute(make_exec_ctx()))
@@ -154,7 +149,7 @@ class TestAsyncExecutorRoleConfigInPrompt:
 class TestAsyncReviewerRoleConfigInPrompt:
     def test_role_config_fields_appear_in_system_prompt(self) -> None:
         backend = AsyncMockBackend()
-        backend.queue_model(_reviewer_json())
+        backend.queue(_reviewer_md())
         cfg = RoleConfig(
             name="Async Reviewer",
             version="2.0.0",
@@ -169,7 +164,7 @@ class TestAsyncReviewerRoleConfigInPrompt:
 
     def test_last_prompt_attributes_match_backend(self) -> None:
         backend = AsyncMockBackend()
-        backend.queue_model(_reviewer_json())
+        backend.queue(_reviewer_md())
         cfg = RoleConfig(name="ARev", version="0.1.0")
         role = AsyncLLMReviewerRole(backend, role_configs={"reviewer-role": cfg})
         asyncio.run(role.review(make_review_ctx()))
@@ -186,7 +181,7 @@ class TestAsyncReviewerRoleConfigInPrompt:
 class TestRoleOverridesMerge:
     def test_phase_overrides_merge_into_role_config(self) -> None:
         backend = MockBackend()
-        backend.queue_model(_executor_json())
+        backend.queue(_executor_md())
         base = RoleConfig(
             name="Base Exec",
             version="0.1.0",

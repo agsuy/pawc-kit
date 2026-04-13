@@ -351,28 +351,36 @@ def test_semantic_compressor_unknown_policy_key_ignored() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_compressor_simple_returns_markdown_compressor() -> None:
+def test_resolve_compressor_none_returns_lossless_pipeline() -> None:
+    from pawc_kit.llm.layers import CompressionPipeline
     from pawc_kit.llm.prompts import _resolve_compressor
 
-    cfg = CompressionConfig(mode="simple")
+    cfg = ContextInjectionConfig(compression=CompressionConfig(mode="none"))
     result = _resolve_compressor(cfg)
-    assert isinstance(result, MarkdownCompressor)
+    assert isinstance(result, CompressionPipeline)
+    assert result._strategy == "lossless"
 
 
-def test_resolve_compressor_none_returns_passthrough() -> None:
+def test_resolve_compressor_balanced_returns_pipeline_with_layers() -> None:
+    from pawc_kit.llm.layers import CompressionPipeline
     from pawc_kit.llm.prompts import _resolve_compressor
 
-    cfg = CompressionConfig(mode="none")
+    cfg = ContextInjectionConfig(strategy="balanced")
     result = _resolve_compressor(cfg)
-    assert isinstance(result, PassthroughCompressor)
+    assert isinstance(result, CompressionPipeline)
+    assert len(result._layers) == 5  # Lossless + DataFormat + PrioritySelection + LosslessCleanup + Adaptive
 
 
-def test_resolve_compressor_semantic_returns_semantic_compressor() -> None:
+def test_resolve_compressor_lossless_strategy_returns_lossless_and_scoring() -> None:
+    from pawc_kit.llm.layers import CompressionPipeline, LosslessLayer, SectionScoringLayer
     from pawc_kit.llm.prompts import _resolve_compressor
 
-    cfg = CompressionConfig(mode="semantic")
+    cfg = ContextInjectionConfig(strategy="lossless")
     result = _resolve_compressor(cfg)
-    assert isinstance(result, SemanticCompressor)
+    assert isinstance(result, CompressionPipeline)
+    assert len(result._layers) == 2
+    assert isinstance(result._layers[0], LosslessLayer)
+    assert isinstance(result._layers[1], SectionScoringLayer)
 
 
 # ---------------------------------------------------------------------------
@@ -398,7 +406,7 @@ def test_request_section_mode_none_uses_passthrough() -> None:
     )
     ctx = make_exec_ctx(context=pack)
     cfg = ContextInjectionConfig(compression=CompressionConfig(mode="none"))
-    section = request_section(ctx, cfg)
+    section, _ = request_section(ctx, cfg)
     assert "doc.md" in section
     assert pack_content in section
 
@@ -419,7 +427,7 @@ def test_request_section_mode_simple_uses_markdown_compressor() -> None:
     )
     ctx = make_exec_ctx(context=pack)
     cfg = ContextInjectionConfig(compression=CompressionConfig(mode="simple"))
-    section = request_section(ctx, cfg)
+    section, _ = request_section(ctx, cfg)
     assert "hidden comment" not in section
     assert "Title" in section
 
@@ -441,5 +449,5 @@ def test_explicit_compressor_overrides_config() -> None:
     ctx = make_exec_ctx(context=pack)
     cfg = ContextInjectionConfig(compression=CompressionConfig(mode="semantic"))
     passthrough = PassthroughCompressor()
-    section = request_section(ctx, cfg, compressor=passthrough)
+    section, _ = request_section(ctx, cfg, compressor=passthrough)
     assert "content" in section

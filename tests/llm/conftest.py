@@ -26,6 +26,7 @@ def make_exec_ctx(
     *,
     role_overrides: dict | None = None,
     context: ContextPayload | None = None,
+    handoff_mode: str = "flat",
 ) -> ExecutionRequest:
     return ExecutionRequest(
         session=make_session(),
@@ -34,6 +35,7 @@ def make_exec_ctx(
             role_id="worker-role",
             kind="executor",
             role_overrides=role_overrides,
+            handoff_mode=handoff_mode,
         ),
         history=WorkflowHistoryView(iterations=[], reviews=[]),
         context=context if context is not None else ContextPayload.empty(),

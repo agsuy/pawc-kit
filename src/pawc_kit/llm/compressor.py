@@ -7,6 +7,7 @@ import re
 from enum import Enum
 
 from pawc_kit.contracts.config import ChunkPolicyConfig, CompressionConfig
+from pawc_kit.ports.compressor import CompressionResult
 
 # ---------------------------------------------------------------------------
 # ChunkType: semantic chunk classification
@@ -220,7 +221,14 @@ class SemanticCompressor:
                 )
         return merged
 
-    def compress(self, content: str, *, max_chars: int | None = None) -> str:
+    def compress(
+        self,
+        content: str,
+        *,
+        budget: int | None = None,
+        filename: str | None = None,
+        content_type: str | None = None,
+    ) -> CompressionResult:
         try:
             from semantic_text_splitter import MarkdownSplitter
         except ImportError as exc:
@@ -229,6 +237,7 @@ class SemanticCompressor:
                 "Install with: pip install 'pawc-kit[semantic]'"
             ) from exc
 
+        original_chars = len(content)
         splitter = MarkdownSplitter(self._config.chunk_size)
         raw_chunks: list[str] = splitter.chunks(content)
 
@@ -238,12 +247,20 @@ class SemanticCompressor:
             policy = self._effective_policies.get(chunk_type, ChunkPolicyConfig())
             compressed_parts.append(apply_chunk_policy(chunk, chunk_type, policy))
 
-        result = "\n\n".join(c for c in compressed_parts if c.strip())
+        text = "\n\n".join(c for c in compressed_parts if c.strip())
 
-        if max_chars is not None and len(result) > max_chars:
-            result = result[:max_chars] + f"\n[truncated at {max_chars} chars]"
+        truncated = False
+        if budget is not None and len(text) > budget:
+            text = text[:budget] + f"\n[truncated at {budget} chars; original {original_chars} chars]"
+            truncated = True
 
-        return result
+        return CompressionResult(
+            content=text,
+            original_chars=original_chars,
+            compressed_chars=len(text),
+            layers_applied=["semantic"],
+            truncated=truncated,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -280,7 +297,15 @@ class MarkdownCompressor:
     def __init__(self, *, max_code_lines: int = 6) -> None:
         self._max_code_lines = max_code_lines
 
-    def compress(self, content: str, *, max_chars: int | None = None) -> str:
+    def compress(
+        self,
+        content: str,
+        *,
+        budget: int | None = None,
+        filename: str | None = None,
+        content_type: str | None = None,
+    ) -> CompressionResult:
+        original_chars = len(content)
         text = content
         text = self._strip_html_comments(text)
         text = self._strip_frontmatter(text)
@@ -289,9 +314,19 @@ class MarkdownCompressor:
         text = self._collapse_blank_lines(text)
         text = self._normalize_inline_whitespace(text)
         text = text.strip()
-        if max_chars is not None and len(text) > max_chars:
-            text = text[:max_chars] + f"\n[truncated at {max_chars} chars]"
-        return text
+
+        truncated = False
+        if budget is not None and len(text) > budget:
+            text = text[:budget] + f"\n[truncated at {budget} chars; original {original_chars} chars]"
+            truncated = True
+
+        return CompressionResult(
+            content=text,
+            original_chars=original_chars,
+            compressed_chars=len(text),
+            layers_applied=["markdown"],
+            truncated=truncated,
+        )
 
     def _strip_html_comments(self, text: str) -> str:
         return self._HTML_COMMENT.sub("", text)
@@ -339,10 +374,27 @@ class MarkdownCompressor:
 class PassthroughCompressor:
     """No-op compressor: returns content unchanged (useful for debugging)."""
 
-    def compress(self, content: str, *, max_chars: int | None = None) -> str:
-        if max_chars is not None and len(content) > max_chars:
-            return content[:max_chars] + f"\n[truncated at {max_chars} chars]"
-        return content
+    def compress(
+        self,
+        content: str,
+        *,
+        budget: int | None = None,
+        filename: str | None = None,
+        content_type: str | None = None,
+    ) -> CompressionResult:
+        original_chars = len(content)
+        text = content
+        truncated = False
+        if budget is not None and len(text) > budget:
+            text = text[:budget] + f"\n[truncated at {budget} chars; original {original_chars} chars]"
+            truncated = True
+        return CompressionResult(
+            content=text,
+            original_chars=original_chars,
+            compressed_chars=len(text),
+            layers_applied=[],
+            truncated=truncated,
+        )
 
 
 __all__ = [
