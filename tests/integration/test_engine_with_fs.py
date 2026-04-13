@@ -10,10 +10,13 @@ import pytest
 from conftest import MinimalReviewer, MinimalWorker, make_simple_graph
 from pawc_kit.adapters.fs.artifact_store import FsArtifactStore
 from pawc_kit.adapters.fs.state_store import FsStateStore
-from pawc_kit.contracts.artifacts import HandoffContext
 from pawc_kit.contracts.config import RoutingRuleConfig
 from pawc_kit.llm.mock import MockBackend
-from pawc_kit.llm.roles import ExecutorOutput, LLMExecutorRole, LLMReviewerRole, ReviewerOutput
+from pawc_kit.llm.roles import LLMExecutorRole, LLMReviewerRole
+
+
+def _sec(name: str, content: str = "") -> str:
+    return f'<pawc-section name="{name}">{content}</pawc-section>'
 from pawc_kit.workflow import WorkflowEngine
 from pawc_kit.workflow.graph import PhaseDefinition, PhaseGraph
 
@@ -137,11 +140,13 @@ def test_llm_executor_routing_selects_correct_target(run_dir: Path) -> None:
     executor_backend = MockBackend()
     reviewer_backend = MockBackend()
     # confidence_score=80 → routing selects quick-review
-    executor_backend.queue_model(
-        ExecutorOutput(confidence_score=80, summary="done", handoff=HandoffContext(summary="h"))
+    executor_backend.queue(
+        _sec("CONFIDENCE", "\n80\n") + _sec("SUMMARY", "\ndone\n") + _sec("HANDOFF", "\nh\n") + _sec("ARTIFACTS", "\n")
     )
-    reviewer_backend.queue_model(
-        ReviewerOutput(decision="APPROVE", confidence_score=90, counts_verified=True, summary="ok")
+    reviewer_backend.queue(
+        _sec("DECISION", "\nAPPROVE\n") + _sec("CONFIDENCE", "\n90\n")
+        + _sec("COUNTS_VERIFIED", "\ntrue\n") + _sec("SUMMARY", "\nok\n")
+        + _sec("FINDINGS", "\n")
     )
 
     ss = FsStateStore(run_dir)
@@ -162,11 +167,13 @@ def test_llm_executor_routing_low_confidence_selects_deep(run_dir: Path) -> None
     executor_backend = MockBackend()
     reviewer_backend = MockBackend()
     # confidence_score=60 → routing selects deep-review
-    executor_backend.queue_model(
-        ExecutorOutput(confidence_score=60, summary="done", handoff=HandoffContext(summary="h"))
+    executor_backend.queue(
+        _sec("CONFIDENCE", "\n60\n") + _sec("SUMMARY", "\ndone\n") + _sec("HANDOFF", "\nh\n") + _sec("ARTIFACTS", "\n")
     )
-    reviewer_backend.queue_model(
-        ReviewerOutput(decision="APPROVE", confidence_score=88, counts_verified=True, summary="ok")
+    reviewer_backend.queue(
+        _sec("DECISION", "\nAPPROVE\n") + _sec("CONFIDENCE", "\n88\n")
+        + _sec("COUNTS_VERIFIED", "\ntrue\n") + _sec("SUMMARY", "\nok\n")
+        + _sec("FINDINGS", "\n")
     )
 
     ss = FsStateStore(run_dir)

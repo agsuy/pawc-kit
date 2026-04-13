@@ -41,7 +41,7 @@ class FsContextPackWriter:
             text = content if isinstance(content, str) else content.decode("utf-8")
             atomic_write(dest, text)
 
-        for subdir in ("discovery", "decisions", "handoffs"):
+        for subdir in ("discovery", "internal", "decisions", "handoffs"):
             (root / subdir).mkdir(parents=True, exist_ok=True)
 
     def write_discovery_file(
@@ -76,7 +76,7 @@ class FsContextPackWriter:
         atomic_write(root / "context.json", metadata.model_dump_json(indent=2))
 
     def append_question(self, context_id: str, entry: QuestionEntry) -> None:
-        qa_path = self._pack_path(context_id) / "discovery" / "q-and-a.json"
+        qa_path = self._pack_path(context_id) / "internal" / "q-and-a.json"
         entries: list[dict[str, object]] = []
         if qa_path.exists():
             entries = json.loads(qa_path.read_text(encoding="utf-8"))
@@ -90,7 +90,7 @@ class FsContextPackWriter:
         answer: str,
         answered_at: str,
     ) -> None:
-        qa_path = self._pack_path(context_id) / "discovery" / "q-and-a.json"
+        qa_path = self._pack_path(context_id) / "internal" / "q-and-a.json"
         entries: list[dict[str, object]] = json.loads(qa_path.read_text(encoding="utf-8"))
         for entry in entries:
             if entry.get("question_id") == question_id:

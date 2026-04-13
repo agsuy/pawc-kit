@@ -222,7 +222,7 @@ def test_e2e_discovery_files_written_to_disk(tmp_path: Path) -> None:
 
 @pytest.mark.integration
 def test_e2e_finalize_handoff_written_to_canonical_pack_path(tmp_path: Path) -> None:
-    """Finalize keeps audit handoffs and also materializes discovery/handoff-context.json."""
+    """Finalize keeps audit handoffs and also materializes internal/handoff-context.json."""
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     pack_dir = state_dir / "contexts" / CTX_ID
@@ -261,7 +261,7 @@ def test_e2e_finalize_handoff_written_to_canonical_pack_path(tmp_path: Path) -> 
     assert state.status == "completed"
 
     audit_handoff = pack_dir / "handoffs" / "finalize-1.json"
-    canonical_handoff = pack_dir / "discovery" / "handoff-context.json"
+    canonical_handoff = pack_dir / "internal" / "handoff-context.json"
     assert audit_handoff.exists(), "Expected finalize audit handoff to remain on disk"
     assert canonical_handoff.exists(), "Expected canonical discovery handoff to be materialized"
     assert json.loads(audit_handoff.read_text()) == json.loads(canonical_handoff.read_text())

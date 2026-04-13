@@ -48,7 +48,9 @@ class _SessionConfig:
         if graph is not None:
             resolved_graph = graph
         elif wf.phases:
-            resolved_graph = PhaseGraph.from_config(wf.phases)
+            resolved_graph = PhaseGraph.from_config(
+                wf.phases, default_handoff_mode=wf.handoff_mode,
+            )
         else:
             raise ConfigurationError(
                 "No workflow graph provided: pass graph= or define workflow.phases in config.yaml"

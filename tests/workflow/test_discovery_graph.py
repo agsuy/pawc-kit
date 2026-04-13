@@ -10,6 +10,12 @@ from pawc_kit.workflow.graph import PhaseGraph
 
 
 def _default_phases() -> list[DiscoveryPhaseConfig]:
+    from pawc_kit.contracts.config import RoutingRuleConfig
+
+    rc_routing = [
+        RoutingRuleConfig(target="research", confidence_lt=50),
+        RoutingRuleConfig(target="synthesis", confidence_gte=50),
+    ]
     return [
         DiscoveryPhaseConfig(phase="research", on_complete="synthesis"),
         DiscoveryPhaseConfig(phase="synthesis", on_complete="ai_review"),
@@ -18,12 +24,14 @@ def _default_phases() -> list[DiscoveryPhaseConfig]:
             can_request_changes_from=["research", "synthesis"],
             on_approve="user_review",
             max_rounds=2,
+            request_changes_routing=rc_routing,
         ),
         DiscoveryPhaseConfig(
             phase="user_review",
             human=True,
             can_request_changes_from=["research", "synthesis"],
             on_approve=["questions", "plan", "finalize"],
+            request_changes_routing=rc_routing,
         ),
         DiscoveryPhaseConfig(phase="questions", max_questions=10, on_complete=["plan", "finalize"]),
         DiscoveryPhaseConfig(phase="plan", on_complete="finalize"),

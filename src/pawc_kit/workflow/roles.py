@@ -12,6 +12,7 @@ from pawc_kit.contracts.state import ArtifactRef, IterationEntry, ReviewEntry
 
 if TYPE_CHECKING:
     from pawc_kit.llm.backend import TokenUsage
+    from pawc_kit.llm.section_recovery import RecoveryMetadata
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,7 @@ class ExecutionResult:
     chosen_next: str | None = None
     pending_question: QuestionRequest | None = None
     usage: TokenUsage | None = None
+    recovery: RecoveryMetadata | None = None
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,7 @@ class ReviewResult:
     decision: ReviewDecision
     chosen_next: str | None = None
     usage: TokenUsage | None = None
+    recovery: RecoveryMetadata | None = None
 
 
 @runtime_checkable

@@ -19,6 +19,7 @@ from pawc_kit._time import utc_now
 from pawc_kit.context import ContextPack
 from pawc_kit.contracts.context import ContextMetadata
 from pawc_kit.contracts.discovery import QuestionRequest
+from pawc_kit.contracts.config import RoutingRuleConfig
 from pawc_kit.contracts.errors import ConfigurationError, TransitionError
 from pawc_kit.contracts.events import HumanReviewPending, PhaseTransitioned, RunCompleted
 from pawc_kit.contracts.execution import ExecutionRequest, ReviewRequest
@@ -192,6 +193,10 @@ def _multi_request_changes_graph() -> PhaseGraph:
                 kind="review",
                 on_approve=["finalize"],
                 can_request_changes_from=["research", "analysis"],
+                request_changes_routing=[
+                    RoutingRuleConfig(target="research", confidence_lt=50),
+                    RoutingRuleConfig(target="analysis", confidence_gte=50),
+                ],
             ),
             PhaseDefinition(phase_id="finalize", role_id="work", kind="executor"),
         ]

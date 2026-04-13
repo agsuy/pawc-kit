@@ -25,6 +25,7 @@ class ContextPack:
     metadata: ContextMetadata
     request_files: dict[str, str]
     discovery_handoff: HandoffContext | None
+    discovery_files: dict[str, str] = field(default_factory=dict)
     discovery_origin: DiscoveryOrigin | None = None
     children: list[ContextPack] = field(default_factory=list)
 
@@ -41,6 +42,7 @@ class ContextPack:
             metadata=ContextMetadata(context_id="none", created_at="1970-01-01T00:00:00Z"),
             request_files={},
             discovery_handoff=None,
+            discovery_files={},
             discovery_origin=None,
             children=[],
         )
@@ -121,6 +123,40 @@ def read_request_files(pack_path: Path) -> dict[str, str]:
 
 
 # ------------------------------------------------------------------
+# 3b. read_discovery_files
+# ------------------------------------------------------------------
+
+
+def read_discovery_files(
+    pack_path: Path,
+    allowlist: list[str] | None = None,
+) -> dict[str, str]:
+    """Read text files from ``discovery/``.
+
+    Returns ``{filename: content}`` for every readable text file.
+    When *allowlist* is not ``None``, only files whose names appear in
+    the list are loaded.  Returns an empty dict when the directory is
+    missing or has no matching files.
+    """
+    discovery_dir = Path(pack_path) / "discovery"
+    if not discovery_dir.is_dir():
+        return {}
+    files: dict[str, str] = {}
+    for entry in discovery_dir.iterdir():
+        if not entry.is_file():
+            continue
+        if entry.name == ".gitkeep":
+            continue
+        if allowlist is not None and entry.name not in allowlist:
+            continue
+        try:
+            files[entry.name] = entry.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, ValueError):
+            continue
+    return files
+
+
+# ------------------------------------------------------------------
 # 4. load_discovery_handoff
 # ------------------------------------------------------------------
 
@@ -130,7 +166,7 @@ def load_discovery_handoff(pack_path: Path) -> HandoffContext | None:
 
     Returns ``None`` if the file does not exist.
     """
-    handoff_path = Path(pack_path) / "discovery" / "handoff-context.json"
+    handoff_path = Path(pack_path) / "internal" / "handoff-context.json"
     if not handoff_path.exists():
         return None
     try:
@@ -178,12 +214,14 @@ def _load_leaf_pack(state_directory: Path, context_id: str) -> ContextPack:
     metadata = load_context_metadata(pack_path)
     request = read_request_files(pack_path)
     handoff = load_discovery_handoff(pack_path)
+    disc_files = read_discovery_files(pack_path)
     origin = load_discovery_origin(pack_path)
     return ContextPack(
         path=pack_path,
         metadata=metadata,
         request_files=request,
         discovery_handoff=handoff,
+        discovery_files=disc_files,
         discovery_origin=origin,
         children=[],
     )
@@ -238,6 +276,7 @@ def load_context_pack(
     metadata = load_context_metadata(pack_path)
     request = read_request_files(pack_path)
     handoff = load_discovery_handoff(pack_path)
+    disc_files = read_discovery_files(pack_path)
     origin = load_discovery_origin(pack_path)
     children = resolve_children(state_directory, metadata, max_composition_size)
     return ContextPack(
@@ -245,6 +284,7 @@ def load_context_pack(
         metadata=metadata,
         request_files=request,
         discovery_handoff=handoff,
+        discovery_files=disc_files,
         discovery_origin=origin,
         children=children,
     )
@@ -365,9 +405,9 @@ def validate_pack(
             except ConfigurationError as exc:
                 errors.append(str(exc))
 
-        handoff_path = pack_path / "discovery" / "handoff-context.json"
+        handoff_path = pack_path / "internal" / "handoff-context.json"
         if not handoff_path.exists():
-            errors.append("discovery/handoff-context.json is missing (required)")
+            errors.append("internal/handoff-context.json is missing (required)")
         else:
             try:
                 envelope = HandoffArtifact.model_validate_json(
@@ -375,14 +415,14 @@ def validate_pack(
                 )
                 if not envelope.parts:
                     errors.append(
-                        "discovery/handoff-context.json: envelope has no parts "
+                        "internal/handoff-context.json: envelope has no parts "
                         "(expected exactly one)"
                     )
                 else:
                     ref_errors = validate_handoff_refs(pack_path, envelope.parts[0].body)
                     errors.extend(ref_errors)
             except Exception as exc:
-                errors.append(f"discovery/handoff-context.json is malformed: {exc}")
+                errors.append(f"internal/handoff-context.json is malformed: {exc}")
 
     if metadata.finalized and children is not None:
         errors.extend(validate_finalization(metadata, children))
@@ -445,7 +485,7 @@ def create_pack_skeleton(
         text = content if isinstance(content, str) else content.decode("utf-8")
         atomic_write(root / rel_path, text)
 
-    for subdir in ("discovery", "decisions", "handoffs"):
+    for subdir in ("discovery", "internal", "decisions", "handoffs"):
         (root / subdir).mkdir(parents=True, exist_ok=True)
 
     return root

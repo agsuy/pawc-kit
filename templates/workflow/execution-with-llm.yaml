@@ -48,7 +48,8 @@ efficiency:
   schema_format: abbreviated
   max_history_entries: null # e.g. 12 to cap expanded iteration/review rows in prompts
   phase_filter: true
-  output_budget: true
+  handoff_guidance:
+    enabled: true
 
 # ---------------------------------------------------------------------------
 # context_injection -- how context pack data enters LLM prompts

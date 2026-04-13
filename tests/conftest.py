@@ -209,7 +209,9 @@ def build_context_pack(
                 }
             ],
         }
-        (disc_dir / "handoff-context.json").write_text(json.dumps(envelope), encoding="utf-8")
+        internal_dir = pack_dir / "internal"
+        internal_dir.mkdir(exist_ok=True)
+        (internal_dir / "handoff-context.json").write_text(json.dumps(envelope), encoding="utf-8")
         (disc_dir / "context-summary.md").write_text("# Context summary\n", encoding="utf-8")
 
     return pack_dir

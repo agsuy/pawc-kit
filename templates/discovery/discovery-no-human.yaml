@@ -53,6 +53,11 @@ phases:
     can_request_changes_from:
       - research
       - synthesis
+    request_changes_routing:
+      - target: research
+        confidence_lt: 50
+      - target: synthesis
+        confidence_gte: 50
     max_rounds: 1
 
   - phase: finalize

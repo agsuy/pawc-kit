@@ -67,8 +67,10 @@ state_directory: ./runs
                                     #   in context_section(); older rows summarized
 #   phase_filter: true              # bool, default true
                                     #   Filter context to current phase only
-#   output_budget: true             # bool, default true
-                                    #   Include output budget hint in prompt
+#   handoff_guidance:               # HandoffGuidanceConfig, default enabled=true
+                                    #     enabled: true            # bool — inject guidance into prompts
+                                    #     guidance_text: null       # str | null — custom text (null = built-in default)
+                                    #     inject_budget_hint: false # bool — opt-in downstream token budget hint
 
 
 # ---------------------------------------------------------------------------

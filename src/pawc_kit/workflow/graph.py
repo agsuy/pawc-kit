@@ -30,8 +30,20 @@ class PhaseDefinition:
     context_sources: list[str] | None = None
     role_overrides: Mapping[str, Any] | None = None
     routing: list[RoutingRuleConfig] = field(default_factory=list)
+    request_changes_routing: list[RoutingRuleConfig] = field(default_factory=list)
     human: bool = False
     max_feedback_rounds: int | None = None
+    max_questions: int | None = None
+    tool_capabilities: list[str] | None = None
+    tool_services: list[str] | None = None
+    tool_overrides: Mapping[str, str] | None = None
+    llm_model: str | None = None
+    handoff_guidance_text: str | None = None
+    inject_budget_hint: bool | None = None
+    handoff_mode: Literal["flat", "typed"] = "flat"
+    overflow: Literal["economy", "quality"] | None = None
+    merge_strategy: Literal["auto", "parts", "deterministic", "preserve_all"] | None = None
+    processing_mode: Literal["auto", "summarize", "extract", "process"] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-serializable dict matching workflow YAML shape for this phase."""
@@ -52,10 +64,36 @@ class PhaseDefinition:
             d["role_overrides"] = dict(self.role_overrides)
         if self.routing:
             d["routing"] = [r.model_dump(mode="json", exclude_none=True) for r in self.routing]
+        if self.request_changes_routing:
+            d["request_changes_routing"] = [
+                r.model_dump(mode="json", exclude_none=True) for r in self.request_changes_routing
+            ]
         if self.human:
             d["human"] = True
         if self.max_feedback_rounds is not None:
             d["max_feedback_rounds"] = self.max_feedback_rounds
+        if self.max_questions is not None:
+            d["max_questions"] = self.max_questions
+        if self.tool_capabilities is not None:
+            d["tool_capabilities"] = list(self.tool_capabilities)
+        if self.tool_services is not None:
+            d["tool_services"] = list(self.tool_services)
+        if self.tool_overrides is not None:
+            d["tool_overrides"] = dict(self.tool_overrides)
+        if self.llm_model is not None:
+            d["llm_model"] = self.llm_model
+        if self.handoff_guidance_text is not None:
+            d["handoff_guidance_text"] = self.handoff_guidance_text
+        if self.inject_budget_hint is not None:
+            d["inject_budget_hint"] = self.inject_budget_hint
+        if self.handoff_mode != "flat":
+            d["handoff_mode"] = self.handoff_mode
+        if self.overflow is not None:
+            d["overflow"] = self.overflow
+        if self.merge_strategy is not None:
+            d["merge_strategy"] = self.merge_strategy
+        if self.processing_mode is not None:
+            d["processing_mode"] = self.processing_mode
         return d
 
 
@@ -141,8 +179,16 @@ class PhaseGraph:
         return errors
 
     @staticmethod
-    def from_config(phases: list[PhaseDefConfig]) -> PhaseGraph:
+    def from_config(
+        phases: list[PhaseDefConfig],
+        *,
+        default_handoff_mode: str = "flat",
+    ) -> PhaseGraph:
         """Build a :class:`PhaseGraph` from a list of :class:`PhaseDefConfig` objects.
+
+        *default_handoff_mode* is the workflow-level default (from
+        ``WorkflowConfig.handoff_mode``).  Each phase inherits this unless
+        it sets its own ``handoff_mode``.
 
         Raises :class:`~pawc_kit.contracts.errors.ConfigurationError` if the
         resulting graph is invalid (duplicate ids, bad transitions, empty list,
@@ -159,8 +205,19 @@ class PhaseGraph:
                 context_sources=list(p.context_sources) if p.context_sources is not None else None,
                 role_overrides=p.role_overrides,
                 routing=list(p.routing),
+                request_changes_routing=list(p.request_changes_routing),
                 human=p.human,
                 max_feedback_rounds=p.max_feedback_rounds,
+                tool_capabilities=list(p.tool_capabilities) if p.tool_capabilities is not None else None,
+                tool_services=list(p.tool_services) if p.tool_services is not None else None,
+                tool_overrides=dict(p.tool_overrides) if p.tool_overrides is not None else None,
+                llm_model=p.llm_model,
+                handoff_guidance_text=p.handoff_guidance_text,
+                inject_budget_hint=p.inject_budget_hint,
+                handoff_mode=p.handoff_mode if p.handoff_mode is not None else default_handoff_mode,
+                overflow=p.overflow,
+                merge_strategy=p.merge_strategy,
+                processing_mode=p.processing_mode,
             )
             for p in phases
         ]
@@ -214,8 +271,13 @@ class PhaseGraph:
                     can_request_changes_from=can_rc,
                     role_overrides=overrides or None,
                     routing=list(p.routing),
+                    request_changes_routing=list(p.request_changes_routing),
                     human=p.human,
                     max_feedback_rounds=p.max_rounds,
+                    max_questions=p.max_questions,
+                    tool_capabilities=list(p.tool_capabilities) if p.tool_capabilities is not None else None,
+                    tool_services=list(p.tool_services) if p.tool_services is not None else None,
+                    tool_overrides=dict(p.tool_overrides) if p.tool_overrides is not None else None,
                 )
             )
 
@@ -303,6 +365,26 @@ class PhaseGraph:
                     errors.append(
                         f"Phase {phase.phase_id!r} routing rule targets {rule.target!r} "
                         f"which is not in its transition targets"
+                    )
+
+            # Review phases with multiple request-changes targets must
+            # have explicit request_changes_routing rules.
+            if (
+                phase.kind == "review"
+                and len(phase.can_request_changes_from) > 1
+                and not phase.request_changes_routing
+            ):
+                errors.append(
+                    f"Review phase {phase.phase_id!r} has {len(phase.can_request_changes_from)} "
+                    f"can_request_changes_from targets but no request_changes_routing rules"
+                )
+
+            rc_targets = set(phase.can_request_changes_from)
+            for rule in phase.request_changes_routing:
+                if rc_targets and rule.target not in rc_targets:
+                    errors.append(
+                        f"Phase {phase.phase_id!r} request_changes_routing rule targets "
+                        f"{rule.target!r} which is not in can_request_changes_from"
                     )
 
         return errors

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import PurePosixPath
 from typing import Any, Literal, Mapping
 
 from pawc_kit._time import utc_now
@@ -84,6 +85,22 @@ def _token_event_kwargs(usage: Any) -> dict[str, Any]:
         "total_tokens": usage.total_tokens,
         "model": usage.model,
         "model_requested": usage.model_requested,
+    }
+
+
+def _recovery_event_kwargs(result: Any) -> dict[str, Any]:
+    """Extract recovery metadata fields from an ExecutionResult/ReviewResult."""
+    r = getattr(result, "recovery", None)
+    if r is None:
+        return {}
+    return {
+        "recovery_sections_requested": len(r.sections_requested),
+        "recovery_sections_recovered": len(r.sections_recovered),
+        "recovery_batch_attempted": r.batch_attempted,
+        "recovery_batch_parsed": r.batch_parsed,
+        "recovery_individual_calls": r.individual_calls,
+        "recovery_total_calls": r.total_calls,
+        "recovery_section_names": ",".join(r.sections_requested),
     }
 
 
@@ -225,6 +242,7 @@ def _context_payload_from_pack(pack: ContextPack) -> ContextPayload:
         context_id=pack.metadata.context_id if pack.metadata else "",
         request_files=dict(pack.request_files),
         discovery_handoff=pack.discovery_handoff,
+        discovery_files=dict(pack.discovery_files),
         children=[_context_payload_from_pack(child) for child in pack.children],
     )
 
@@ -344,6 +362,18 @@ def _build_iteration_entry(
         summary=result.summary,
         artifacts=list(result.artifacts),
         handoff_context_ref=handoff_ref_str,
+        pending_question_id=(
+            result.pending_question.question_id if result.pending_question else None
+        ),
+    )
+
+
+def _count_phase_questions(state: SessionState, phase_id: str) -> int:
+    """Count iterations for *phase_id* that produced a pending question."""
+    return sum(
+        1
+        for e in state.phase_iterations
+        if e.phase_id == phase_id and e.pending_question_id is not None
     )
 
 
@@ -371,6 +401,7 @@ def _iteration_committed_event(
         chosen_next=result.chosen_next,
         handoff_context_ref=entry.handoff_context_ref,
         **_token_event_kwargs(result.usage),
+        **_recovery_event_kwargs(result),
     )
 
 
@@ -385,6 +416,7 @@ def _make_decision_payload(phase: PhaseDefinition, result: "ReviewResult") -> De
         ended_at=result.ended_at,
         findings=result.decision.findings,
         target_phase=result.decision.target_phase,
+        gate_override_reason=result.decision.gate_override_reason,
     )
 
 
@@ -436,6 +468,7 @@ def _build_review_entry(
         ended_at=payload.ended_at,
         findings_ref=decision_ref_str,
         counts_verified=payload.counts_verified,
+        gate_override_reason=payload.gate_override_reason,
     )
 
 
@@ -476,6 +509,7 @@ def _review_committed_event(
         chosen_next=result.chosen_next,
         findings_ref=decision_ref_str,
         **_token_event_kwargs(result.usage),
+        **_recovery_event_kwargs(result),
     )
 
 
@@ -562,7 +596,7 @@ class WorkflowEngine:
         max_iterations: int = 10,
         max_feedback_rounds: int = 3,
         confidence_floor: int | None = None,
-        artifact_backfill_retries: int = 1,
+        artifact_backfill_retries: int = 1,  # deprecated: unused at engine level; pass to invoker
         metadata: Mapping[str, Any] | None = None,
         invoker: RoleInvoker | None = None,
         controller: RunController | None = None,
@@ -584,7 +618,6 @@ class WorkflowEngine:
         self._max_iterations = max_iterations
         self._max_feedback_rounds = max_feedback_rounds
         self._confidence_floor = confidence_floor
-        self._artifact_backfill_retries = artifact_backfill_retries
         self._metadata = metadata
         self._adhoc_questions = adhoc_questions
         self._explicit_invoker = invoker is not None
@@ -837,7 +870,20 @@ class WorkflowEngine:
                         f"Phase {phase.phase_id!r} returned a pending_question but "
                         "adhoc_questions is disabled"
                     )
-                raise _StopRequested()
+                if phase.max_questions is not None:
+                    asked = _count_phase_questions(runtime.state, phase.phase_id)
+                    if asked > phase.max_questions:
+                        _logger.info(
+                            "Phase %s: max_questions=%d reached (%d asked), "
+                            "continuing without pause",
+                            phase.phase_id,
+                            phase.max_questions,
+                            asked,
+                        )
+                    else:
+                        raise _StopRequested()
+                else:
+                    raise _StopRequested()
 
             iteration_count += 1
             if not targets:
@@ -1022,7 +1068,7 @@ class AsyncWorkflowEngine:
         max_iterations: int = 10,
         max_feedback_rounds: int = 3,
         confidence_floor: int | None = None,
-        artifact_backfill_retries: int = 1,
+        artifact_backfill_retries: int = 1,  # deprecated: unused at engine level; pass to invoker
         metadata: Mapping[str, Any] | None = None,
         invoker: AsyncRoleInvoker | None = None,
         controller: RunController | None = None,
@@ -1039,7 +1085,6 @@ class AsyncWorkflowEngine:
         self._max_iterations = max_iterations
         self._max_feedback_rounds = max_feedback_rounds
         self._confidence_floor = confidence_floor
-        self._artifact_backfill_retries = artifact_backfill_retries
         self._metadata = metadata
         self._context_pack_writer = context_pack_writer
         self._adhoc_questions = adhoc_questions
@@ -1280,6 +1325,9 @@ class AsyncWorkflowEngine:
 
             if self._context_pack_writer is not None and runtime.state.context_id:
                 for f in result.files:
+                    if runtime.context_pack is not None:
+                        key = PurePosixPath(f.ref).name
+                        runtime.context_pack.discovery_files[key] = f.content
                     await self._context_pack_writer.write_discovery_file(
                         runtime.state.context_id, f.ref, f.content
                     )
@@ -1295,7 +1343,7 @@ class AsyncWorkflowEngine:
                         return
                     await self._context_pack_writer.write_discovery_file(
                         runtime.state.context_id,
-                        "discovery/handoff-context.json",
+                        "internal/handoff-context.json",
                         _canonical_discovery_handoff_artifact(
                             phase_id=phase.phase_id,
                             role_id=result.role_id,
@@ -1335,18 +1383,31 @@ class AsyncWorkflowEngine:
                         f"Phase {phase.phase_id!r} returned a pending_question but "
                         "adhoc_questions is disabled"
                     )
-                if self._context_pack_writer is not None and runtime.state.context_id:
-                    q_entry = QuestionEntry(
-                        question_id=result.pending_question.question_id,
-                        question=result.pending_question.question,
-                        phase_id=phase.phase_id,
-                        asked_by=result.role_id,
-                        asked_at=result.ended_at,
-                    )
-                    await self._context_pack_writer.append_question(
-                        runtime.state.context_id, q_entry
-                    )
-                raise _StopRequested()
+                question_allowed = True
+                if phase.max_questions is not None:
+                    asked = _count_phase_questions(runtime.state, phase.phase_id)
+                    if asked > phase.max_questions:
+                        _logger.info(
+                            "Phase %s: max_questions=%d reached (%d asked), "
+                            "continuing without pause",
+                            phase.phase_id,
+                            phase.max_questions,
+                            asked,
+                        )
+                        question_allowed = False
+                if question_allowed:
+                    if self._context_pack_writer is not None and runtime.state.context_id:
+                        q_entry = QuestionEntry(
+                            question_id=result.pending_question.question_id,
+                            question=result.pending_question.question,
+                            phase_id=phase.phase_id,
+                            asked_by=result.role_id,
+                            asked_at=result.ended_at,
+                        )
+                        await self._context_pack_writer.append_question(
+                            runtime.state.context_id, q_entry
+                        )
+                    raise _StopRequested()
 
             iteration_count += 1
             if not targets:

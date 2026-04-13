@@ -10,6 +10,7 @@ from pawc_kit.contracts.context import ContextMetadata
 from pawc_kit.contracts.discovery import QuestionEntry, QuestionRequest
 from pawc_kit.contracts.events import HumanReviewPending
 from pawc_kit.contracts.state import ReviewEntry
+from pawc_kit.context import ContextPack
 from pawc_kit.workflow.engine import AsyncWorkflowEngine
 from pawc_kit.workflow.graph import PhaseDefinition, PhaseGraph
 from pawc_kit.workflow.roles import ExecutionResult, ReviewDecision, ReviewResult
@@ -538,7 +539,7 @@ def test_executor_files_written_to_writer() -> None:
     assert len(writer.files_written) == 3
     assert writer.files_written[0] == ("ctx-1", "discovery/summary.md", "# Summary\n")
     assert writer.files_written[1] == ("ctx-1", "discovery/glossary.md", "# Glossary\n")
-    assert writer.files_written[2][1] == "discovery/handoff-context.json"
+    assert writer.files_written[2][1] == "internal/handoff-context.json"
 
 
 def test_executor_empty_files_no_write_calls() -> None:
@@ -558,7 +559,7 @@ def test_executor_empty_files_no_write_calls() -> None:
     )
 
     assert len(writer.files_written) == 1
-    assert writer.files_written[0][1] == "discovery/handoff-context.json"
+    assert writer.files_written[0][1] == "internal/handoff-context.json"
 
 
 def test_files_not_written_without_context_id() -> None:
@@ -582,6 +583,55 @@ def test_files_not_written_without_context_id() -> None:
     )
 
     assert writer.files_written == []
+
+
+def test_engine_updates_discovery_files_in_memory() -> None:
+    """Researcher FileArtifacts appear in context_pack.discovery_files for the finalize phase."""
+    writer = MockContextPackWriter()
+
+    captured_requests: list = []
+
+    class CapturingFinalize:
+        async def execute(self, req):
+            captured_requests.append(req)
+            return ExecutionResult(
+                role_id="finalize",
+                ended_at=TS,
+                confidence_score=90,
+                summary="done",
+                handoff=HandoffContext(
+                    summary="packaged",
+                    key_artifacts=[],
+                    open_questions=[],
+                    assumptions=[],
+                ),
+            )
+
+    artifacts = [
+        FileArtifact(
+            type="documentation",
+            ref="discovery/summary.md",
+            description="Summary",
+            content="# Summary\n",
+        ),
+    ]
+    engine, _, _ = _build_engine(_simple_graph(), writer=writer)
+    engine.register_role("research", FileExecutor(files=artifacts))
+    engine.register_role("finalize", CapturingFinalize())
+
+    pack = ContextPack.empty()
+    asyncio.run(
+        engine.run(
+            session_id="s1",
+            skill_name="test",
+            skill_version="1.0.0",
+            context_id="ctx-1",
+            context_pack=pack,
+        )
+    )
+
+    assert len(captured_requests) == 1
+    assert captured_requests[0].context.discovery_files == {"summary.md": "# Summary\n"}
 
 
 def test_finalize_passes_lock_true_on_completion() -> None:
@@ -667,3 +717,191 @@ def test_adhoc_question_pauses_and_appends() -> None:
     assert state.current_phase == "research"
     assert len(writer.questions) == 1
     assert writer.questions[0].question_id == "q-1"
+
+
+def test_pending_question_id_persisted_on_iteration() -> None:
+    """IterationEntry records the pending_question_id when a question is asked."""
+    writer = MockContextPackWriter()
+    engine, state_store, observer = _build_engine(
+        _simple_graph(), writer=writer, adhoc_questions=True
+    )
+    pq = QuestionRequest(question_id="q-42", question="Which endpoint?")
+    engine.register_role("research", FixedExecutor(pending_question=pq))
+    engine.register_role("finalize", FixedExecutor())
+
+    state = asyncio.run(
+        engine.run(
+            session_id="s1",
+            skill_name="test",
+            skill_version="1.0.0",
+            context_id="ctx-1",
+        )
+    )
+    assert state.phase_iterations[0].pending_question_id == "q-42"
+
+
+def test_iteration_without_question_has_null_pending_question_id() -> None:
+    """IterationEntry.pending_question_id is None for normal iterations."""
+    engine, state_store, observer = _build_engine(_simple_graph())
+    engine.register_role("research", FixedExecutor())
+    engine.register_role("finalize", FixedExecutor())
+
+    state = asyncio.run(
+        engine.run(
+            session_id="s1",
+            skill_name="test",
+            skill_version="1.0.0",
+        )
+    )
+    assert state.status == "completed"
+    for entry in state.phase_iterations:
+        assert entry.pending_question_id is None
+
+
+# ---------------------------------------------------------------------------
+# max_questions enforcement
+# ---------------------------------------------------------------------------
+
+
+class CountingQuestionExecutor:
+    """Executor that returns a unique question each call, up to a fixed count."""
+
+    def __init__(self, total_questions: int = 10, confidence: int = 50):
+        self._total = total_questions
+        self._confidence = confidence
+        self._call_count = 0
+
+    async def execute(self, req):
+        self._call_count += 1
+        # Always ask a question (if we have any left)
+        pq = QuestionRequest(
+            question_id=f"q-{self._call_count}",
+            question=f"Question {self._call_count}?",
+        )
+        return ExecutionResult(
+            role_id=req.phase.role_id,
+            ended_at=TS,
+            confidence_score=self._confidence,
+            summary=f"iteration {self._call_count}",
+            pending_question=pq,
+        )
+
+
+def _graph_with_max_questions(max_q: int) -> PhaseGraph:
+    """Single executor phase with max_questions, then finalize."""
+    return PhaseGraph(
+        [
+            PhaseDefinition(
+                phase_id="research",
+                role_id="research",
+                kind="executor",
+                on_complete=["finalize"],
+                max_questions=max_q,
+            ),
+            PhaseDefinition(phase_id="finalize", role_id="finalize", kind="executor"),
+        ]
+    )
+
+
+def test_max_questions_enforced_stops_pausing_after_limit() -> None:
+    """Engine stops pausing for questions once max_questions is reached."""
+    writer = MockContextPackWriter()
+    graph = _graph_with_max_questions(2)
+    engine, state_store, observer = _build_engine(
+        graph, writer=writer, adhoc_questions=True, confidence_threshold=40,
+    )
+    executor = CountingQuestionExecutor(confidence=50)
+    engine.register_role("research", executor)
+    engine.register_role("finalize", _finalize_executor())
+
+    # Run 1: first question asked, engine pauses
+    state = asyncio.run(
+        engine.run(
+            session_id="s1",
+            skill_name="test",
+            skill_version="1.0.0",
+            context_id="ctx-1",
+        )
+    )
+    assert state.status == "in_progress"
+    assert state.current_phase == "research"
+    assert len(writer.questions) == 1
+
+    # Run 2: second question asked, engine pauses (still under limit)
+    state = asyncio.run(
+        engine.run(
+            session_id="s1",
+            skill_name="test",
+            skill_version="1.0.0",
+            context_id="ctx-1",
+        )
+    )
+    assert state.status == "in_progress"
+    assert len(writer.questions) == 2
+
+    # Run 3: third question returned by executor, but max_questions=2 reached,
+    # engine continues without pausing → hits confidence threshold → completes
+    state = asyncio.run(
+        engine.run(
+            session_id="s1",
+            skill_name="test",
+            skill_version="1.0.0",
+            context_id="ctx-1",
+        )
+    )
+    # The third question was NOT appended to the writer (limit reached)
+    assert len(writer.questions) == 2
+    assert state.status == "completed"
+
+
+def test_max_questions_none_allows_unlimited() -> None:
+    """Without max_questions, every question pauses the engine."""
+    writer = MockContextPackWriter()
+    engine, state_store, observer = _build_engine(
+        _simple_graph(), writer=writer, adhoc_questions=True,
+    )
+    executor = CountingQuestionExecutor(confidence=50)
+    engine.register_role("research", executor)
+    engine.register_role("finalize", FixedExecutor())
+
+    # Each run should pause for a question (no limit)
+    for i in range(3):
+        state = asyncio.run(
+            engine.run(
+                session_id="s1",
+                skill_name="test",
+                skill_version="1.0.0",
+                context_id="ctx-1",
+            )
+        )
+        assert state.status == "in_progress"
+        assert len(writer.questions) == i + 1
+
+
+def test_max_questions_in_phase_definition_to_dict() -> None:
+    """PhaseDefinition.to_dict() includes max_questions when set."""
+    phase = PhaseDefinition(
+        phase_id="q", role_id="q", kind="executor", max_questions=5,
+    )
+    d = phase.to_dict()
+    assert d["max_questions"] == 5
+
+    phase_no_limit = PhaseDefinition(phase_id="q2", role_id="q2", kind="executor")
+    d2 = phase_no_limit.to_dict()
+    assert "max_questions" not in d2
+
+
+def test_from_discovery_config_sets_max_questions() -> None:
+    """PhaseGraph.from_discovery_config() propagates max_questions to PhaseDefinition."""
+    from pawc_kit.contracts.discovery import DiscoveryConfig, DiscoveryPhaseConfig
+
+    config = DiscoveryConfig(
+        phases=[
+            DiscoveryPhaseConfig(phase="research", on_complete="finalize", max_questions=3),
+            DiscoveryPhaseConfig(phase="finalize"),
+        ],
+        require_human_approval=False,
+    )
+    graph = PhaseGraph.from_discovery_config(config)
+    assert graph.get("research").max_questions == 3
+    assert graph.get("finalize").max_questions is None

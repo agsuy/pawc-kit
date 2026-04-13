@@ -103,6 +103,75 @@ def test_read_request_files_missing_dir_raises(state_dir: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# read_discovery_files
+# ---------------------------------------------------------------------------
+
+
+def test_read_discovery_files_loads_all(state_dir: Path) -> None:
+    pack_path = make_pack(state_dir, "ctx-df")
+    disc = pack_path / "discovery"
+    disc.mkdir(exist_ok=True)
+    (disc / "findings.md").write_text("# Findings\n", encoding="utf-8")
+    (disc / "sources.md").write_text("# Sources\n", encoding="utf-8")
+    from pawc_kit.context import read_discovery_files
+
+    files = read_discovery_files(pack_path)
+    assert files == {"findings.md": "# Findings\n", "sources.md": "# Sources\n"}
+
+
+def test_read_discovery_files_respects_allowlist(state_dir: Path) -> None:
+    pack_path = make_pack(state_dir, "ctx-al")
+    disc = pack_path / "discovery"
+    disc.mkdir(exist_ok=True)
+    (disc / "findings.md").write_text("# Findings\n", encoding="utf-8")
+    (disc / "sources.md").write_text("# Sources\n", encoding="utf-8")
+    from pawc_kit.context import read_discovery_files
+
+    files = read_discovery_files(pack_path, allowlist=["findings.md"])
+    assert files == {"findings.md": "# Findings\n"}
+
+
+def test_read_discovery_files_skips_non_utf8(state_dir: Path) -> None:
+    pack_path = make_pack(state_dir, "ctx-bin")
+    disc = pack_path / "discovery"
+    disc.mkdir(exist_ok=True)
+    (disc / "data.bin").write_bytes(b"\xff\xfe\x00\x01")
+    (disc / "notes.md").write_text("ok", encoding="utf-8")
+    from pawc_kit.context import read_discovery_files
+
+    files = read_discovery_files(pack_path)
+    assert files == {"notes.md": "ok"}
+
+
+def test_read_discovery_files_empty_dir_returns_empty(state_dir: Path) -> None:
+    pack_path = make_pack(state_dir, "ctx-ed")
+    disc = pack_path / "discovery"
+    disc.mkdir(exist_ok=True)
+    from pawc_kit.context import read_discovery_files
+
+    assert read_discovery_files(pack_path) == {}
+
+
+def test_read_discovery_files_missing_dir_returns_empty(state_dir: Path) -> None:
+    pack_path = make_pack(state_dir, "ctx-md")
+    import shutil
+
+    shutil.rmtree(pack_path / "discovery", ignore_errors=True)
+    from pawc_kit.context import read_discovery_files
+
+    assert read_discovery_files(pack_path) == {}
+
+
+def test_load_context_pack_populates_discovery_files(state_dir: Path) -> None:
+    pack_path = make_pack(state_dir, "ctx-lp")
+    disc = pack_path / "discovery"
+    disc.mkdir(exist_ok=True)
+    (disc / "summary.md").write_text("# Summary\n", encoding="utf-8")
+    pack = load_context_pack(state_dir, "ctx-lp")
+    assert pack.discovery_files == {"summary.md": "# Summary\n"}
+
+
+# ---------------------------------------------------------------------------
 # load_discovery_handoff
 # ---------------------------------------------------------------------------
 
@@ -122,9 +191,9 @@ def test_load_discovery_handoff_valid(state_dir: Path) -> None:
 
 def test_load_discovery_handoff_malformed_raises(state_dir: Path) -> None:
     pack_path = make_pack(state_dir, "ctx-1")
-    disc_dir = pack_path / "discovery"
-    disc_dir.mkdir()
-    (disc_dir / "handoff-context.json").write_text("not valid json")
+    internal_dir = pack_path / "internal"
+    internal_dir.mkdir()
+    (internal_dir / "handoff-context.json").write_text("not valid json")
     with pytest.raises(ConfigurationError, match="Malformed"):
         load_discovery_handoff(pack_path)
 

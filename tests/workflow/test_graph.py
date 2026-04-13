@@ -597,3 +597,168 @@ def test_phase_graph_to_dict_list_matches_phases() -> None:
         ]
     )
     assert graph.to_dict_list() == [p.to_dict() for p in graph.phases]
+
+
+# ---------------------------------------------------------------------------
+# Tool capability fields on PhaseDefinition
+# ---------------------------------------------------------------------------
+
+
+def test_phase_definition_tool_fields_default_none() -> None:
+    phase = PhaseDefinition(phase_id="work", role_id="w", kind="executor")
+    assert phase.tool_capabilities is None
+    assert phase.tool_services is None
+    assert phase.tool_overrides is None
+
+
+def test_phase_definition_tool_fields_set() -> None:
+    phase = PhaseDefinition(
+        phase_id="work",
+        role_id="w",
+        kind="executor",
+        tool_capabilities=["web_search", "url_fetch"],
+        tool_services=["mcp_github"],
+        tool_overrides={"web_search": "mcp_exa"},
+    )
+    assert phase.tool_capabilities == ["web_search", "url_fetch"]
+    assert phase.tool_services == ["mcp_github"]
+    assert phase.tool_overrides == {"web_search": "mcp_exa"}
+
+
+def test_phase_definition_to_dict_includes_tool_fields() -> None:
+    phase = PhaseDefinition(
+        phase_id="work",
+        role_id="w",
+        kind="executor",
+        tool_capabilities=["web_search"],
+        tool_services=["mcp_github"],
+        tool_overrides={"web_search": "mcp_exa"},
+    )
+    d = phase.to_dict()
+    assert d["tool_capabilities"] == ["web_search"]
+    assert d["tool_services"] == ["mcp_github"]
+    assert d["tool_overrides"] == {"web_search": "mcp_exa"}
+
+
+def test_phase_definition_to_dict_omits_none_tool_fields() -> None:
+    phase = PhaseDefinition(phase_id="work", role_id="w", kind="executor")
+    d = phase.to_dict()
+    assert "tool_capabilities" not in d
+    assert "tool_services" not in d
+    assert "tool_overrides" not in d
+
+
+def test_from_config_propagates_tool_fields() -> None:
+    phases = [
+        PhaseDefConfig(
+            phase_id="research",
+            role_id="researcher",
+            kind="executor",
+            tool_capabilities=["web_search"],
+            tool_services=["mcp_github"],
+            tool_overrides={"web_search": "mcp_exa"},
+        ),
+    ]
+    graph = PhaseGraph.from_config(phases)
+    p = graph.get("research")
+    assert p.tool_capabilities == ["web_search"]
+    assert p.tool_services == ["mcp_github"]
+    assert p.tool_overrides == {"web_search": "mcp_exa"}
+
+
+def test_from_config_tool_fields_default_none() -> None:
+    phases = [
+        PhaseDefConfig(phase_id="work", role_id="w", kind="executor"),
+    ]
+    graph = PhaseGraph.from_config(phases)
+    p = graph.get("work")
+    assert p.tool_capabilities is None
+    assert p.tool_services is None
+    assert p.tool_overrides is None
+
+
+def test_from_discovery_config_propagates_tool_fields() -> None:
+    from pawc_kit.contracts.discovery import DiscoveryConfig, DiscoveryPhaseConfig
+
+    disc = DiscoveryConfig(
+        require_human_approval=False,
+        phases=[
+            DiscoveryPhaseConfig(
+                phase="research",
+                on_complete=["synthesis"],
+                tool_capabilities=["web_search"],
+                tool_services=["mcp_github"],
+                tool_overrides={"web_search": "mcp_exa"},
+            ),
+            DiscoveryPhaseConfig(phase="synthesis"),
+        ],
+    )
+    graph = PhaseGraph.from_discovery_config(disc)
+    p = graph.get("research")
+    assert p.tool_capabilities == ["web_search"]
+    assert p.tool_services == ["mcp_github"]
+    assert p.tool_overrides == {"web_search": "mcp_exa"}
+
+    s = graph.get("synthesis")
+    assert s.tool_capabilities is None
+    assert s.tool_services is None
+    assert s.tool_overrides is None
+
+
+# ---------------------------------------------------------------------------
+# PhaseDefinition.handoff_mode
+# ---------------------------------------------------------------------------
+
+
+def test_phase_definition_handoff_mode_default() -> None:
+    phase = PhaseDefinition(phase_id="work", role_id="worker", kind="executor")
+    assert phase.handoff_mode == "flat"
+
+
+def test_phase_definition_handoff_mode_typed() -> None:
+    phase = PhaseDefinition(
+        phase_id="work", role_id="worker", kind="executor", handoff_mode="typed",
+    )
+    assert phase.handoff_mode == "typed"
+
+
+def test_to_dict_includes_handoff_mode_typed() -> None:
+    phase = PhaseDefinition(
+        phase_id="work", role_id="worker", kind="executor", handoff_mode="typed",
+    )
+    d = phase.to_dict()
+    assert d["handoff_mode"] == "typed"
+
+
+def test_to_dict_excludes_handoff_mode_flat() -> None:
+    phase = PhaseDefinition(phase_id="work", role_id="worker", kind="executor")
+    d = phase.to_dict()
+    assert "handoff_mode" not in d
+
+
+def test_from_config_passes_handoff_mode() -> None:
+    phases = [
+        PhaseDefConfig(
+            phase_id="work", role_id="worker", kind="executor", handoff_mode="typed",
+        ),
+    ]
+    graph = PhaseGraph.from_config(phases)
+    assert graph.get("work").handoff_mode == "typed"
+
+
+def test_from_config_inherits_workflow_default() -> None:
+    phases = [
+        PhaseDefConfig(phase_id="work", role_id="worker", kind="executor"),
+    ]
+    graph = PhaseGraph.from_config(phases, default_handoff_mode="typed")
+    assert graph.get("work").handoff_mode == "typed"
+
+
+def test_from_config_phase_override_beats_workflow_default() -> None:
+    phases = [
+        PhaseDefConfig(
+            phase_id="work", role_id="worker", kind="executor", handoff_mode="flat",
+        ),
+    ]
+    graph = PhaseGraph.from_config(phases, default_handoff_mode="typed")
+    assert graph.get("work").handoff_mode == "flat"

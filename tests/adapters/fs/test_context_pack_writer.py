@@ -155,7 +155,7 @@ def test_append_question_creates_qa_file(tmp_path: Path) -> None:
     writer = FsContextPackWriter(tmp_path)
     writer.initialize("ctx-1", _metadata(), {"p.md": "x"}, {})
     writer.append_question("ctx-1", _question("q-1"))
-    qa_path = tmp_path / "contexts" / "ctx-1" / "discovery" / "q-and-a.json"
+    qa_path = tmp_path / "contexts" / "ctx-1" / "internal" / "q-and-a.json"
     entries = json.loads(qa_path.read_text())
     assert len(entries) == 1
     assert entries[0]["question_id"] == "q-1"
@@ -166,7 +166,7 @@ def test_append_question_appends_to_existing(tmp_path: Path) -> None:
     writer.initialize("ctx-1", _metadata(), {"p.md": "x"}, {})
     writer.append_question("ctx-1", _question("q-1"))
     writer.append_question("ctx-1", _question("q-2"))
-    qa_path = tmp_path / "contexts" / "ctx-1" / "discovery" / "q-and-a.json"
+    qa_path = tmp_path / "contexts" / "ctx-1" / "internal" / "q-and-a.json"
     entries = json.loads(qa_path.read_text())
     assert len(entries) == 2
     assert entries[1]["question_id"] == "q-2"
@@ -177,7 +177,7 @@ def test_update_question_sets_answer(tmp_path: Path) -> None:
     writer.initialize("ctx-1", _metadata(), {"p.md": "x"}, {})
     writer.append_question("ctx-1", _question("q-1"))
     writer.update_question("ctx-1", "q-1", "OAuth 2.0", "2026-01-02T00:00:00Z")
-    qa_path = tmp_path / "contexts" / "ctx-1" / "discovery" / "q-and-a.json"
+    qa_path = tmp_path / "contexts" / "ctx-1" / "internal" / "q-and-a.json"
     entries = json.loads(qa_path.read_text())
     assert entries[0]["answer"] == "OAuth 2.0"
     assert entries[0]["answered_at"] == "2026-01-02T00:00:00Z"
@@ -229,6 +229,6 @@ def test_async_writer_question_cycle(tmp_path: Path) -> None:
     asyncio.run(writer.initialize("ctx-a", _metadata("ctx-a"), {"p.md": "x"}, {}))
     asyncio.run(writer.append_question("ctx-a", _question("q-1")))
     asyncio.run(writer.update_question("ctx-a", "q-1", "JWT", TS))
-    qa_path = tmp_path / "contexts" / "ctx-a" / "discovery" / "q-and-a.json"
+    qa_path = tmp_path / "contexts" / "ctx-a" / "internal" / "q-and-a.json"
     entries = json.loads(qa_path.read_text())
     assert entries[0]["answer"] == "JWT"
