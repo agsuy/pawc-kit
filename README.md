@@ -1,5 +1,11 @@
 # pawc-kit
 
+[![CI](https://github.com/agsuy/pawc-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/agsuy/pawc-kit/actions/workflows/ci.yml)
+[![PyPI version](https://img.shields.io/pypi/v/pawc-kit)](https://pypi.org/project/pawc-kit/)
+[![Python versions](https://img.shields.io/pypi/pyversions/pawc-kit)](https://pypi.org/project/pawc-kit/)
+[![License](https://img.shields.io/pypi/l/pawc-kit)](https://github.com/agsuy/pawc-kit/blob/main/LICENSE)
+
+
 `pawc-kit` is a Python library for **multi-phase execution and review workflows**: execution graphs from native `config.yaml`, **discovery** graphs from `DiscoveryConfig`, filesystem-backed default adapters, and a stable **LLM** integration layer (backends, structured output, prompt assembly, LLM roles). Sync and **async** engines and sessions are both first-class.
 
 The supported public surface is:

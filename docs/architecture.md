@@ -156,7 +156,7 @@ produce a new composite version without rewriting the old dependency snapshot.
 - `context.json`
 - `request/*`
 - `config/discovery-origin.yaml` when present
-- `discovery/handoff-context.json` when present
+- `internal/handoff-context.json` when present
 - all composed child packs under `contexts/<child_id>/...`
 
 Portable family display naming is deliberately out of scope for `pawc-kit`.

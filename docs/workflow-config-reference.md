@@ -97,7 +97,7 @@ Used by **`pawc_kit.llm.prompts`** when you pass an `EfficiencyConfig` into role
 | `schema_format` | `str` | `"abbreviated"` | `full`, `abbreviated`, `none` | Yes — executor/reviewer structured prompts. |
 | `max_history_entries` | `int \| null` | `null` | — | Yes — in `context_section()`, at most this many recent **iteration** rows and (separately) **review** rows are expanded in full; older rows collapse to a short summary. **Not** a token limit. |
 | `phase_filter` | `bool` | `true` | — | Yes — filter context to current phase when `true`. |
-| `output_budget` | `bool` | `true` | — | Yes — adds concise-output hints when `true`. |
+| `handoff_guidance` | `HandoffGuidanceConfig` | `{enabled: true}` | — | Yes — injects structure guidance into executor prompts and conciseness hints into reviewer prompts. |
 
 ```yaml
 efficiency:
@@ -105,7 +105,10 @@ efficiency:
   schema_format: abbreviated
   max_history_entries: null
   phase_filter: true
-  output_budget: true
+  handoff_guidance:
+    enabled: true
+    # guidance_text: null        # custom text (null = built-in default)
+    # inject_budget_hint: false  # opt-in downstream token budget hint
 ```
 
 ---
