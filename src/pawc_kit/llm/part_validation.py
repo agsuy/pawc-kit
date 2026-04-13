@@ -50,7 +50,12 @@ def _validate_part(
             updates["part_type"] = fuzzy
         else:
             updates["part_type"] = _retry_key(
-                backend, index, "type", part.part_type, VALID_PART_TYPES, part.content,
+                backend,
+                index,
+                "type",
+                part.part_type,
+                VALID_PART_TYPES,
+                part.content,
             )
     if part.priority not in VALID_PRIORITIES:
         fuzzy = _fuzzy_correct(part.priority, VALID_PRIORITIES)
@@ -58,11 +63,21 @@ def _validate_part(
             updates["priority"] = fuzzy
         else:
             updates["priority"] = _retry_key(
-                backend, index, "priority", part.priority, VALID_PRIORITIES, part.content,
+                backend,
+                index,
+                "priority",
+                part.priority,
+                VALID_PRIORITIES,
+                part.content,
             )
     if not part.content or not part.content.strip():
         updates["content"] = _retry_key(
-            backend, index, "content", part.content, None, None,
+            backend,
+            index,
+            "content",
+            part.content,
+            None,
+            None,
         )
     return part.model_copy(update=updates) if updates else part
 
@@ -79,7 +94,12 @@ async def _async_validate_part(  # NOTE: sync/async mirror of _validate_part
             updates["part_type"] = fuzzy
         else:
             updates["part_type"] = await _async_retry_key(
-                backend, index, "type", part.part_type, VALID_PART_TYPES, part.content,
+                backend,
+                index,
+                "type",
+                part.part_type,
+                VALID_PART_TYPES,
+                part.content,
             )
     if part.priority not in VALID_PRIORITIES:
         fuzzy = _fuzzy_correct(part.priority, VALID_PRIORITIES)
@@ -87,11 +107,21 @@ async def _async_validate_part(  # NOTE: sync/async mirror of _validate_part
             updates["priority"] = fuzzy
         else:
             updates["priority"] = await _async_retry_key(
-                backend, index, "priority", part.priority, VALID_PRIORITIES, part.content,
+                backend,
+                index,
+                "priority",
+                part.priority,
+                VALID_PRIORITIES,
+                part.content,
             )
     if not part.content or not part.content.strip():
         updates["content"] = await _async_retry_key(
-            backend, index, "content", part.content, None, None,
+            backend,
+            index,
+            "content",
+            part.content,
+            None,
+            None,
         )
     return part.model_copy(update=updates) if updates else part
 
@@ -109,9 +139,13 @@ def _retry_key(
     if content and valid_values:
         snippet = content[:_CONTENT_SNIPPET_LEN]
         content_hint = f"\n\nContent (first {_CONTENT_SNIPPET_LEN} chars):\n{snippet}"
+    user_msg = (
+        f"Part {part_index}: '{key_name}' has invalid value '{invalid_value}'."
+        f"{valid_hint}{content_hint}"
+    )
     result = backend.complete(
         system="Fix the invalid value. Return only the corrected value, nothing else.",
-        user=f"Part {part_index}: '{key_name}' has invalid value '{invalid_value}'.{valid_hint}{content_hint}",
+        user=user_msg,
         max_tokens=50,
     )
     return result.text.strip().strip('"').strip("'")
@@ -130,9 +164,13 @@ async def _async_retry_key(  # NOTE: sync/async mirror of _retry_key
     if content and valid_values:
         snippet = content[:_CONTENT_SNIPPET_LEN]
         content_hint = f"\n\nContent (first {_CONTENT_SNIPPET_LEN} chars):\n{snippet}"
+    user_msg = (
+        f"Part {part_index}: '{key_name}' has invalid value '{invalid_value}'."
+        f"{valid_hint}{content_hint}"
+    )
     result = await backend.complete(
         system="Fix the invalid value. Return only the corrected value, nothing else.",
-        user=f"Part {part_index}: '{key_name}' has invalid value '{invalid_value}'.{valid_hint}{content_hint}",
+        user=user_msg,
         max_tokens=50,
     )
     return result.text.strip().strip('"').strip("'")

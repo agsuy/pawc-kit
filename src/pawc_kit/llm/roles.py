@@ -107,7 +107,9 @@ def _merge_token_usage(total: TokenUsage, addition: TokenUsage) -> TokenUsage:
 
 
 def _apply_recovered_section(
-    output: ExecutorOutput, section: str, recovered: str,
+    output: ExecutorOutput,
+    section: str,
+    recovered: str,
 ) -> ExecutorOutput:
     """Apply a recovered section value to an ExecutorOutput."""
     from pawc_kit.llm.md_output import EXECUTOR_SECTIONS, apply_recovered_standard
@@ -117,14 +119,18 @@ def _apply_recovered_section(
         return result  # type: ignore[return-value]
     # Custom: HANDOFF is a nested field (handoff.summary)
     if section == "HANDOFF":
-        return output.model_copy(update={
-            "handoff": output.handoff.model_copy(update={"summary": recovered}),
-        })
+        return output.model_copy(
+            update={
+                "handoff": output.handoff.model_copy(update={"summary": recovered}),
+            }
+        )
     return output
 
 
 def _apply_recovered_reviewer_section(
-    output: ReviewerOutput, section: str, recovered: str,
+    output: ReviewerOutput,
+    section: str,
+    recovered: str,
 ) -> ReviewerOutput:
     """Apply a recovered section value to a ReviewerOutput."""
     from pawc_kit.llm.md_output import REVIEWER_SECTIONS, apply_recovered_standard
@@ -485,7 +491,11 @@ class LLMExecutorRole(_LLMRoleBase[LLMBackend], Executor):
         if missing:
             _logger.info(
                 "recovery.triggered",
-                extra={"sections": missing, "phase_id": req.phase.phase_id, "role_id": req.phase.role_id},
+                extra={
+                    "sections": missing,
+                    "phase_id": req.phase.phase_id,
+                    "role_id": req.phase.role_id,
+                },
             )
             from pawc_kit.llm.section_recovery import recover_sections
 
@@ -508,9 +518,7 @@ class LLMExecutorRole(_LLMRoleBase[LLMBackend], Executor):
             )
 
         if output.confidence_score == 0:
-            raise LLMError(
-                "Confidence score is 0 after recovery — requires human review"
-            )
+            raise LLMError("Confidence score is 0 after recovery — requires human review")
 
         if output.handoff and output.handoff.parts:
             from pawc_kit.llm.enrichment import enrich_handoff_parts
@@ -518,9 +526,11 @@ class LLMExecutorRole(_LLMRoleBase[LLMBackend], Executor):
 
             validated = validate_handoff_parts(output.handoff.parts, self._backend)
             enriched = enrich_handoff_parts(validated)
-            output = output.model_copy(update={
-                "handoff": output.handoff.model_copy(update={"parts": enriched}),
-            })
+            output = output.model_copy(
+                update={
+                    "handoff": output.handoff.model_copy(update={"parts": enriched}),
+                }
+            )
 
         _run_backfill(self, output, system, req.phase.phase_id, req.phase.role_id)
 
@@ -582,7 +592,11 @@ class LLMReviewerRole(_LLMRoleBase[LLMBackend], Reviewer):
         if missing:
             _logger.info(
                 "recovery.triggered",
-                extra={"sections": missing, "phase_id": req.phase.phase_id, "role_id": req.phase.role_id},
+                extra={
+                    "sections": missing,
+                    "phase_id": req.phase.phase_id,
+                    "role_id": req.phase.role_id,
+                },
             )
             from pawc_kit.llm.section_recovery import recover_sections
 
@@ -605,9 +619,7 @@ class LLMReviewerRole(_LLMRoleBase[LLMBackend], Reviewer):
             )
 
         if output.confidence_score == 0:
-            raise LLMError(
-                "Confidence score is 0 after recovery — requires human review"
-            )
+            raise LLMError("Confidence score is 0 after recovery — requires human review")
 
         decision, gate_override_reason = _enforce_quality_gates(output, self._quality_gates)
 
@@ -619,7 +631,9 @@ class LLMReviewerRole(_LLMRoleBase[LLMBackend], Reviewer):
             validated_findings = output.findings
 
         target_phase = _resolve_request_changes_target(
-            decision, output.confidence_score, req.phase.request_changes_routing,
+            decision,
+            output.confidence_score,
+            req.phase.request_changes_routing,
         )
 
         chosen_next: str | None = None
@@ -681,7 +695,11 @@ class AsyncLLMExecutorRole(_LLMRoleBase[AsyncLLMBackend], AsyncExecutor):
         if missing:
             _logger.info(
                 "recovery.triggered",
-                extra={"sections": missing, "phase_id": req.phase.phase_id, "role_id": req.phase.role_id},
+                extra={
+                    "sections": missing,
+                    "phase_id": req.phase.phase_id,
+                    "role_id": req.phase.role_id,
+                },
             )
             from pawc_kit.llm.section_recovery import async_recover_sections
 
@@ -704,9 +722,7 @@ class AsyncLLMExecutorRole(_LLMRoleBase[AsyncLLMBackend], AsyncExecutor):
             )
 
         if output.confidence_score == 0:
-            raise LLMError(
-                "Confidence score is 0 after recovery — requires human review"
-            )
+            raise LLMError("Confidence score is 0 after recovery — requires human review")
 
         if output.handoff and output.handoff.parts:
             from pawc_kit.llm.enrichment import enrich_handoff_parts
@@ -714,9 +730,11 @@ class AsyncLLMExecutorRole(_LLMRoleBase[AsyncLLMBackend], AsyncExecutor):
 
             validated = await async_validate_handoff_parts(output.handoff.parts, self._backend)
             enriched = enrich_handoff_parts(validated)
-            output = output.model_copy(update={
-                "handoff": output.handoff.model_copy(update={"parts": enriched}),
-            })
+            output = output.model_copy(
+                update={
+                    "handoff": output.handoff.model_copy(update={"parts": enriched}),
+                }
+            )
 
         await _run_backfill_async(self, output, system, req.phase.phase_id, req.phase.role_id)
 
@@ -778,7 +796,11 @@ class AsyncLLMReviewerRole(_LLMRoleBase[AsyncLLMBackend], AsyncReviewer):
         if missing:
             _logger.info(
                 "recovery.triggered",
-                extra={"sections": missing, "phase_id": req.phase.phase_id, "role_id": req.phase.role_id},
+                extra={
+                    "sections": missing,
+                    "phase_id": req.phase.phase_id,
+                    "role_id": req.phase.role_id,
+                },
             )
             from pawc_kit.llm.section_recovery import async_recover_sections
 
@@ -801,9 +823,7 @@ class AsyncLLMReviewerRole(_LLMRoleBase[AsyncLLMBackend], AsyncReviewer):
             )
 
         if output.confidence_score == 0:
-            raise LLMError(
-                "Confidence score is 0 after recovery — requires human review"
-            )
+            raise LLMError("Confidence score is 0 after recovery — requires human review")
 
         decision, gate_override_reason = _enforce_quality_gates(output, self._quality_gates)
 
@@ -811,13 +831,17 @@ class AsyncLLMReviewerRole(_LLMRoleBase[AsyncLLMBackend], AsyncReviewer):
             from pawc_kit.llm.finding_validation import async_validate_findings
 
             validated_findings = await async_validate_findings(
-                output.findings, decision, self._backend,
+                output.findings,
+                decision,
+                self._backend,
             )
         else:
             validated_findings = output.findings
 
         target_phase = _resolve_request_changes_target(
-            decision, output.confidence_score, req.phase.request_changes_routing,
+            decision,
+            output.confidence_score,
+            req.phase.request_changes_routing,
         )
 
         chosen_next: str | None = None

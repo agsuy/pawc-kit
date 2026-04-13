@@ -54,6 +54,7 @@ class RecoveryResult:
             total_calls=self.total_calls,
         )
 
+
 _logger = logging.getLogger(__name__)
 
 _MAX_RECOVERY_CONTEXT = 4000  # chars, ~1K tokens
@@ -113,7 +114,7 @@ def recover_section(
     prompt = SECTION_RECOVERY_PROMPTS.get(section_name, f"Extract the {section_name}.")
     context = _build_recovery_context(analysis_text, section_name)
     result = backend.complete(
-        system="Extract the requested information from the analysis. Return only the value.",
+        system=("Extract the requested information from the analysis. Return only the value."),
         user=f"Analysis:\n{context}\n\n{prompt}",
         max_tokens=200,
     )
@@ -194,7 +195,10 @@ def recover_sections(
             context = _build_recovery_context(analysis_text, remaining[0])
             batch_prompt = _build_batch_prompt(remaining)
             result = backend.complete(
-                system="Extract the requested information from the analysis. Return each value on its own line prefixed with the section name.",
+                system=(
+                    "Extract the requested information from the analysis. "
+                    "Return each value on its own line prefixed with the section name."
+                ),
                 user=f"Analysis:\n{context}\n\n{batch_prompt}",
                 max_tokens=400,
             )
@@ -213,7 +217,9 @@ def recover_sections(
             prompt = SECTION_RECOVERY_PROMPTS.get(section, f"Extract the {section}.")
             context = _build_recovery_context(analysis_text, section)
             result = backend.complete(
-                system="Extract the requested information from the analysis. Return only the value.",
+                system=(
+                    "Extract the requested information from the analysis. Return only the value."
+                ),
                 user=f"Analysis:\n{context}\n\n{prompt}",
                 max_tokens=200,
             )
@@ -221,7 +227,8 @@ def recover_sections(
             recovered[section] = result.text.strip()
         except LLMError:
             _logger.warning(
-                "Section recovery failed for %s, keeping default", section,
+                "Section recovery failed for %s, keeping default",
+                section,
             )
 
     total_calls = (1 if batch_attempted else 0) + individual_calls
@@ -246,7 +253,7 @@ async def async_recover_section(  # NOTE: sync/async mirror of recover_section
     prompt = SECTION_RECOVERY_PROMPTS.get(section_name, f"Extract the {section_name}.")
     context = _build_recovery_context(analysis_text, section_name)
     result = await backend.complete(
-        system="Extract the requested information from the analysis. Return only the value.",
+        system=("Extract the requested information from the analysis. Return only the value."),
         user=f"Analysis:\n{context}\n\n{prompt}",
         max_tokens=200,
     )
@@ -276,7 +283,10 @@ async def async_recover_sections(  # NOTE: sync/async mirror of recover_sections
             context = _build_recovery_context(analysis_text, remaining[0])
             batch_prompt = _build_batch_prompt(remaining)
             result = await backend.complete(
-                system="Extract the requested information from the analysis. Return each value on its own line prefixed with the section name.",
+                system=(
+                    "Extract the requested information from the analysis. "
+                    "Return each value on its own line prefixed with the section name."
+                ),
                 user=f"Analysis:\n{context}\n\n{batch_prompt}",
                 max_tokens=400,
             )
@@ -295,7 +305,9 @@ async def async_recover_sections(  # NOTE: sync/async mirror of recover_sections
             prompt = SECTION_RECOVERY_PROMPTS.get(section, f"Extract the {section}.")
             context = _build_recovery_context(analysis_text, section)
             result = await backend.complete(
-                system="Extract the requested information from the analysis. Return only the value.",
+                system=(
+                    "Extract the requested information from the analysis. Return only the value."
+                ),
                 user=f"Analysis:\n{context}\n\n{prompt}",
                 max_tokens=200,
             )
@@ -303,7 +315,8 @@ async def async_recover_sections(  # NOTE: sync/async mirror of recover_sections
             recovered[section] = result.text.strip()
         except LLMError:
             _logger.warning(
-                "Section recovery failed for %s, keeping default", section,
+                "Section recovery failed for %s, keeping default",
+                section,
             )
 
     total_calls = (1 if batch_attempted else 0) + individual_calls

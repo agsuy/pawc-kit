@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import re
 
-
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _FRONTMATTER = re.compile(r"^---\n.*?\n---\n", re.DOTALL)
 _CODE_BLOCK = re.compile(r"```(?P<lang>\w*)\n(?P<body>.*?)```", re.DOTALL)
@@ -80,9 +79,7 @@ class LosslessLayer:
             head = lines[: limit // 2]
             tail = lines[-(limit // 2) :]
             omitted = len(lines) - limit
-            compressed = (
-                "\n".join(head) + f"\n[... {omitted} lines ...]\n" + "\n".join(tail)
-            )
+            compressed = "\n".join(head) + f"\n[... {omitted} lines ...]\n" + "\n".join(tail)
             fence = f"```{lang}" if lang else "```"
             return f"{fence}\n{compressed}\n```"
 

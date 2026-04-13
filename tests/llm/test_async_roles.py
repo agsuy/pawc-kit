@@ -7,7 +7,6 @@ import asyncio
 import pytest
 
 from pawc_kit.contracts import LLMError
-from pawc_kit.contracts.artifacts import FindingEntry
 from pawc_kit.contracts.config import RoutingRuleConfig
 from pawc_kit.llm.backend import TokenUsage
 from pawc_kit.llm.mock import AsyncMockBackend
@@ -25,7 +24,10 @@ def _sec(name: str, content: str = "") -> str:
 
 
 def _executor_md(
-    confidence: int = 90, summary: str = "Done", handoff: str = "handoff", artifacts: str = "",
+    confidence: int = 90,
+    summary: str = "Done",
+    handoff: str = "handoff",
+    artifacts: str = "",
 ) -> str:
     return (
         _sec("CONFIDENCE", f"\n{confidence}\n")
@@ -36,8 +38,12 @@ def _executor_md(
 
 
 def _reviewer_md(
-    decision: str = "APPROVE", confidence: int = 88, counts_verified: str = "true",
-    summary: str = "Good", findings: str = "", target_phase: str = "",
+    decision: str = "APPROVE",
+    confidence: int = 88,
+    counts_verified: str = "true",
+    summary: str = "Good",
+    findings: str = "",
+    target_phase: str = "",
 ) -> str:
     return (
         _sec("DECISION", f"\n{decision}\n")
@@ -50,8 +56,11 @@ def _reviewer_md(
 
 
 def _finding_md(
-    severity: str = "high", category: str = "logic", title: str = "issue",
-    details: str = "details", required_change: str = "fix it",
+    severity: str = "high",
+    category: str = "logic",
+    title: str = "issue",
+    details: str = "details",
+    required_change: str = "fix it",
 ) -> str:
     return (
         f'<pawc-finding severity="{severity}" category="{category}">\n'
@@ -180,9 +189,14 @@ def test_async_reviewer_role_returns_review_result() -> None:
 def test_async_reviewer_role_quality_gate_override() -> None:
     backend = AsyncMockBackend()
     finding = _finding_md(severity="critical")
-    backend.queue(_reviewer_md(
-        decision="APPROVE", confidence=70, summary="review", findings=finding,
-    ))
+    backend.queue(
+        _reviewer_md(
+            decision="APPROVE",
+            confidence=70,
+            summary="review",
+            findings=finding,
+        )
+    )
     role = AsyncLLMReviewerRole(
         backend, quality_gates={"critical_findings_allowed": 0, "high_findings_allowed": 1}
     )
@@ -204,10 +218,15 @@ def test_async_reviewer_role_routing_on_approve() -> None:
 def test_async_reviewer_role_request_changes_no_routing() -> None:
     backend = AsyncMockBackend()
     finding = _finding_md(severity="high", title="issue", details="d")
-    backend.queue(_reviewer_md(
-        decision="REQUEST_CHANGES", confidence=40,
-        counts_verified="false", summary="needs work", findings=finding,
-    ))
+    backend.queue(
+        _reviewer_md(
+            decision="REQUEST_CHANGES",
+            confidence=40,
+            counts_verified="false",
+            summary="needs work",
+            findings=finding,
+        )
+    )
     rules = [_rule("next-a", lt=50), _rule("next-b", gte=50)]
     role = AsyncLLMReviewerRole(backend)
     result = asyncio.run(role.review(_make_review_ctx_with_routing(rules)))
@@ -224,9 +243,7 @@ def test_async_executor_recovery_missing_summary() -> None:
     """Async executor: SUMMARY missing → recovery fills it."""
     backend = AsyncMockBackend()
     backend.queue(
-        _sec("CONFIDENCE", "\n85\n")
-        + _sec("HANDOFF", "\nhandoff info\n")
-        + _sec("ARTIFACTS", "\n")
+        _sec("CONFIDENCE", "\n85\n") + _sec("HANDOFF", "\nhandoff info\n") + _sec("ARTIFACTS", "\n")
     )
     backend.queue("Recovered summary")
     role = AsyncLLMExecutorRole(backend)

@@ -20,17 +20,19 @@ calls from the plan.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
+from pawc_kit.llm.layers.priority_selection import (
+    PrioritySelectionLayer,
+    ScoredSection,
+    SectionScoringLayer,
+)
 from pawc_kit.ports.compressor import (
     CompressionLayer,
     CompressionResult,
     SectionBatch,
     SplitPlan,
 )
-
-if TYPE_CHECKING:
-    from pawc_kit.llm.layers.priority_selection import ScoredSection
 
 
 class SectionSink(Protocol):
@@ -101,11 +103,12 @@ class CompressionPipeline:
         last_scored: list[ScoredSection] = []
 
         for layer in self._layers:
-            has_sections = hasattr(layer, "last_sections")
+            section_aware = isinstance(layer, (PrioritySelectionLayer, SectionScoringLayer))
 
-            if has_sections:
-                # PrioritySelectionLayer — pass truncation_hint
-                text, layer_name = layer.apply(
+            if section_aware:
+                # Selection/scoring layers accept truncation_hint and expose last_sections
+                sel_layer = layer
+                text, layer_name = sel_layer.apply(
                     text,
                     filename=filename,
                     budget=budget,
@@ -124,8 +127,8 @@ class CompressionPipeline:
                 applied.append(layer_name)
 
             # Capture scored sections and emit to sink
-            if has_sections:
-                last_scored = layer.last_sections
+            if section_aware:
+                last_scored = sel_layer.last_sections
                 if self._sink is not None:
                     for section in last_scored:
                         self._sink.emit(section)
@@ -135,15 +138,13 @@ class CompressionPipeline:
             # a SplitPlan from ALL sections (zero information loss) and
             # return early — skipping Adaptive.
             if (
-                has_sections
+                section_aware
                 and self._overflow == "quality"
                 and budget is not None
                 and last_scored
                 and any(not s.selected for s in last_scored)
             ):
-                plan = _build_split_plan(
-                    last_scored, budget, filename or ""
-                )
+                plan = _build_split_plan(last_scored, budget, filename or "")
                 return CompressionResult(
                     content=text,
                     original_chars=original_chars,

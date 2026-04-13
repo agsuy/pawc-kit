@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -23,7 +23,12 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 
-_DEFAULT_ACCEPTABLE: Callable[[str], bool] = lambda t: bool(t.strip())
+
+def _default_acceptable(text: str) -> bool:
+    return bool(text.strip())
+
+
+_DEFAULT_ACCEPTABLE_FN: Callable[[str], bool] = _default_acceptable
 
 
 @dataclass
@@ -36,7 +41,8 @@ class RetryPolicy:
 
 
 def _merge_usage(
-    base: TokenUsage | None, addition: TokenUsage | None,
+    base: TokenUsage | None,
+    addition: TokenUsage | None,
 ) -> TokenUsage | None:
     if addition is None:
         return base
@@ -59,7 +65,7 @@ def complete_with_retry(
     user: str,
     *,
     policy: RetryPolicy | None = None,
-    is_acceptable: Callable[[str], bool] = _DEFAULT_ACCEPTABLE,
+    is_acceptable: Callable[[str], bool] = _DEFAULT_ACCEPTABLE_FN,
     max_tokens: int | None = None,
 ) -> CompletionResult:
     """Call ``backend.complete()`` with retry on empty/unacceptable responses.
@@ -92,7 +98,7 @@ async def async_complete_with_retry(
     user: str,
     *,
     policy: RetryPolicy | None = None,
-    is_acceptable: Callable[[str], bool] = _DEFAULT_ACCEPTABLE,
+    is_acceptable: Callable[[str], bool] = _DEFAULT_ACCEPTABLE_FN,
     max_tokens: int | None = None,
 ) -> CompletionResult:
     """Async variant of :func:`complete_with_retry` with exponential backoff."""

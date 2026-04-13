@@ -24,13 +24,17 @@ def _enrich_part(part: HandoffPart, registry: LanguageRegistry) -> HandoffPart:
             metadata["language"] = lang
 
     compressible = registry.resolve_compressible(
-        part.priority, part.part_type, metadata.get("language"),
+        part.priority,
+        part.part_type,
+        metadata.get("language"),
     )
 
-    return part.model_copy(update={
-        "compressible": compressible,
-        "metadata": metadata or None,
-    })
+    return part.model_copy(
+        update={
+            "compressible": compressible,
+            "metadata": metadata or None,
+        }
+    )
 
 
 __all__ = ["enrich_handoff_parts"]

@@ -9,16 +9,16 @@ from pathlib import Path
 
 import pytest
 
-
-def _sec(name: str, content: str = "") -> str:
-    return f'<pawc-section name="{name}">{content}</pawc-section>'
-
 from pawc_kit.async_session import AsyncWorkflowSession
 from pawc_kit.llm.mock import AsyncMockBackend
 from pawc_kit.llm.roles import (
     AsyncLLMExecutorRole,
     AsyncLLMReviewerRole,
 )
+
+
+def _sec(name: str, content: str = "") -> str:
+    return f'<pawc-section name="{name}">{content}</pawc-section>'
 
 
 @pytest.mark.integration
@@ -49,11 +49,16 @@ def test_async_session_purely_config_driven(tmp_path: Path) -> None:
 
     backend = AsyncMockBackend()
     backend.queue(
-        _sec("CONFIDENCE", "\n90\n") + _sec("SUMMARY", "\ndone\n") + _sec("HANDOFF", "\nhandoff\n") + _sec("ARTIFACTS", "\n")
+        _sec("CONFIDENCE", "\n90\n")
+        + _sec("SUMMARY", "\ndone\n")
+        + _sec("HANDOFF", "\nhandoff\n")
+        + _sec("ARTIFACTS", "\n")
     )
     backend.queue(
-        _sec("DECISION", "\nAPPROVE\n") + _sec("CONFIDENCE", "\n88\n")
-        + _sec("COUNTS_VERIFIED", "\ntrue\n") + _sec("SUMMARY", "\napproved\n")
+        _sec("DECISION", "\nAPPROVE\n")
+        + _sec("CONFIDENCE", "\n88\n")
+        + _sec("COUNTS_VERIFIED", "\ntrue\n")
+        + _sec("SUMMARY", "\napproved\n")
         + _sec("FINDINGS", "\n")
     )
     session.register_role("worker-role", AsyncLLMExecutorRole(backend))

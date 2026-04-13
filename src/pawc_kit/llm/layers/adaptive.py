@@ -10,7 +10,8 @@ Implements the ``CompressionLayer`` protocol.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
 
@@ -55,19 +56,69 @@ ContentCategory = Literal["code", "prose", "data"]
 # Filename → content category heuristic
 # ---------------------------------------------------------------------------
 
-_CODE_EXTENSIONS = frozenset({
-    ".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".go", ".rs", ".rb",
-    ".c", ".cpp", ".h", ".hpp", ".cs", ".swift", ".kt", ".scala",
-    ".sh", ".bash", ".zsh", ".lua", ".r", ".m", ".sql", ".graphql",
-    ".vue", ".svelte", ".php", ".pl", ".ex", ".exs", ".zig",
-})
-_DATA_EXTENSIONS = frozenset({
-    ".json", ".yaml", ".yml", ".toml", ".csv", ".tsv", ".xml",
-    ".ndjson", ".jsonl", ".parquet", ".avro",
-})
-_PROSE_EXTENSIONS = frozenset({
-    ".md", ".rst", ".txt", ".adoc", ".tex", ".org", ".html", ".htm",
-})
+_CODE_EXTENSIONS = frozenset(
+    {
+        ".py",
+        ".js",
+        ".ts",
+        ".jsx",
+        ".tsx",
+        ".java",
+        ".go",
+        ".rs",
+        ".rb",
+        ".c",
+        ".cpp",
+        ".h",
+        ".hpp",
+        ".cs",
+        ".swift",
+        ".kt",
+        ".scala",
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".lua",
+        ".r",
+        ".m",
+        ".sql",
+        ".graphql",
+        ".vue",
+        ".svelte",
+        ".php",
+        ".pl",
+        ".ex",
+        ".exs",
+        ".zig",
+    }
+)
+_DATA_EXTENSIONS = frozenset(
+    {
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".csv",
+        ".tsv",
+        ".xml",
+        ".ndjson",
+        ".jsonl",
+        ".parquet",
+        ".avro",
+    }
+)
+_PROSE_EXTENSIONS = frozenset(
+    {
+        ".md",
+        ".rst",
+        ".txt",
+        ".adoc",
+        ".tex",
+        ".org",
+        ".html",
+        ".htm",
+    }
+)
 
 
 def _guess_category(
@@ -105,9 +156,7 @@ def _guess_category(
 # ---------------------------------------------------------------------------
 
 _PYTHON_COMMENT = re.compile(r"^\s*#(?!\!).*$", re.MULTILINE)
-_PYTHON_DOCSTRING = re.compile(
-    r'("""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\')', re.MULTILINE
-)
+_PYTHON_DOCSTRING = re.compile(r'("""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\')', re.MULTILINE)
 _BLANK_LINES = re.compile(r"\n{3,}")
 _TRAILING_WHITESPACE = re.compile(r"[ \t]+$", re.MULTILINE)
 
@@ -132,9 +181,7 @@ _FUNC_OR_CLASS = re.compile(
     r"^((?:async\s+)?(?:def|class)\s+\w+[^:]*:).*?(?=\n(?:(?:async\s+)?(?:def|class)\s)|\Z)",
     re.MULTILINE | re.DOTALL,
 )
-_SIGNATURE_LINE = re.compile(
-    r"^((?:async\s+)?(?:def|class)\s+\w+[^:]*:)", re.MULTILINE
-)
+_SIGNATURE_LINE = re.compile(r"^((?:async\s+)?(?:def|class)\s+\w+[^:]*:)", re.MULTILINE)
 
 
 def _code_outlined(text: str) -> str:
@@ -212,9 +259,7 @@ def _prose_moderate(text: str) -> str:
             if len(items) > 5:
                 kept = items[:5]
                 omitted = len(items) - 5
-                result.append(
-                    "\n".join(kept) + f"\n[...{omitted} more items]"
-                )
+                result.append("\n".join(kept) + f"\n[...{omitted} more items]")
             else:
                 result.append(stripped)
         else:
@@ -245,9 +290,7 @@ def _prose_aggressive(text: str) -> str:
         elif _LIST_ITEM.match(stripped):
             items = [ln for ln in stripped.splitlines() if ln.strip()]
             if len(items) > 3:
-                result.append(
-                    "\n".join(items[:3]) + f"\n[...{len(items) - 3} more items]"
-                )
+                result.append("\n".join(items[:3]) + f"\n[...{len(items) - 3} more items]")
             else:
                 result.append(stripped)
         else:
@@ -293,28 +336,28 @@ def _data_sampled(text: str, max_records: int = 20) -> str:
 # Action dispatch tables
 # ---------------------------------------------------------------------------
 
-_CODE_ACTIONS: dict[CompressionLevel, callable] = {
+_CODE_ACTIONS: dict[CompressionLevel, Callable[[str], str]] = {
     CompressionLevel.LIGHT: _code_compact,
     CompressionLevel.MODERATE: _code_minified,
     CompressionLevel.AGGRESSIVE: _code_outlined,
     CompressionLevel.EMERGENCY: _code_signatures,
 }
 
-_PROSE_ACTIONS: dict[CompressionLevel, callable] = {
+_PROSE_ACTIONS: dict[CompressionLevel, Callable[[str], str]] = {
     CompressionLevel.LIGHT: _prose_light,
     CompressionLevel.MODERATE: _prose_moderate,
     CompressionLevel.AGGRESSIVE: _prose_aggressive,
     CompressionLevel.EMERGENCY: _prose_emergency,
 }
 
-_DATA_ACTIONS: dict[CompressionLevel, callable] = {
+_DATA_ACTIONS: dict[CompressionLevel, Callable[[str], str]] = {
     CompressionLevel.LIGHT: _data_minified,
     CompressionLevel.MODERATE: _data_minified,
     CompressionLevel.AGGRESSIVE: _data_sampled,
     CompressionLevel.EMERGENCY: _data_sampled,
 }
 
-_CATEGORY_ACTIONS: dict[ContentCategory, dict[CompressionLevel, callable]] = {
+_CATEGORY_ACTIONS: dict[ContentCategory, dict[CompressionLevel, Callable[[str], str]]] = {
     "code": _CODE_ACTIONS,
     "prose": _PROSE_ACTIONS,
     "data": _DATA_ACTIONS,
@@ -349,9 +392,7 @@ class AdaptiveCompressionLayer:
         if thresholds is not None:
             self._thresholds = thresholds
         else:
-            self._thresholds = STRATEGY_THRESHOLDS.get(
-                strategy, STRATEGY_THRESHOLDS["balanced"]
-            )
+            self._thresholds = STRATEGY_THRESHOLDS.get(strategy, STRATEGY_THRESHOLDS["balanced"])
 
     def _select_level(self, ratio: float) -> CompressionLevel:
         if ratio >= self._thresholds.emergency:

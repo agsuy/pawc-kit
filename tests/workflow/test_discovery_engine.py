@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 
+from pawc_kit.context import ContextPack
 from pawc_kit.contracts.artifacts import FileArtifact, HandoffContext, KeyArtifactRef
 from pawc_kit.contracts.context import ContextMetadata
 from pawc_kit.contracts.discovery import QuestionEntry, QuestionRequest
 from pawc_kit.contracts.events import HumanReviewPending
 from pawc_kit.contracts.state import ReviewEntry
-from pawc_kit.context import ContextPack
 from pawc_kit.workflow.engine import AsyncWorkflowEngine
 from pawc_kit.workflow.graph import PhaseDefinition, PhaseGraph
 from pawc_kit.workflow.roles import ExecutionResult, ReviewDecision, ReviewResult
@@ -808,7 +808,10 @@ def test_max_questions_enforced_stops_pausing_after_limit() -> None:
     writer = MockContextPackWriter()
     graph = _graph_with_max_questions(2)
     engine, state_store, observer = _build_engine(
-        graph, writer=writer, adhoc_questions=True, confidence_threshold=40,
+        graph,
+        writer=writer,
+        adhoc_questions=True,
+        confidence_threshold=40,
     )
     executor = CountingQuestionExecutor(confidence=50)
     engine.register_role("research", executor)
@@ -858,7 +861,9 @@ def test_max_questions_none_allows_unlimited() -> None:
     """Without max_questions, every question pauses the engine."""
     writer = MockContextPackWriter()
     engine, state_store, observer = _build_engine(
-        _simple_graph(), writer=writer, adhoc_questions=True,
+        _simple_graph(),
+        writer=writer,
+        adhoc_questions=True,
     )
     executor = CountingQuestionExecutor(confidence=50)
     engine.register_role("research", executor)
@@ -881,7 +886,10 @@ def test_max_questions_none_allows_unlimited() -> None:
 def test_max_questions_in_phase_definition_to_dict() -> None:
     """PhaseDefinition.to_dict() includes max_questions when set."""
     phase = PhaseDefinition(
-        phase_id="q", role_id="q", kind="executor", max_questions=5,
+        phase_id="q",
+        role_id="q",
+        kind="executor",
+        max_questions=5,
     )
     d = phase.to_dict()
     assert d["max_questions"] == 5

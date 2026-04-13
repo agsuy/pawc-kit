@@ -401,11 +401,14 @@ def test_executor_prompts_custom_guidance_text() -> None:
 def test_executor_prompts_per_phase_guidance_overrides_workflow() -> None:
     """Phase-level guidance_text wins over workflow-level."""
     phase = PhaseDefinition(
-        phase_id="work", role_id="worker-role", kind="executor",
+        phase_id="work",
+        role_id="worker-role",
+        kind="executor",
         handoff_guidance_text="Phase-specific guidance here.",
     )
     ctx = ExecutionRequest(
-        session=make_session(), phase=phase,
+        session=make_session(),
+        phase=phase,
         history=WorkflowHistoryView(iterations=[], reviews=[]),
         context=ContextPayload.empty(),
     )
@@ -437,11 +440,14 @@ def test_executor_prompts_budget_hint_not_shown_by_default() -> None:
 def test_executor_prompts_per_phase_budget_hint_override() -> None:
     """Phase-level inject_budget_hint overrides workflow-level."""
     phase = PhaseDefinition(
-        phase_id="work", role_id="worker-role", kind="executor",
+        phase_id="work",
+        role_id="worker-role",
+        kind="executor",
         inject_budget_hint=True,
     )
     ctx = ExecutionRequest(
-        session=make_session(), phase=phase,
+        session=make_session(),
+        phase=phase,
         history=WorkflowHistoryView(iterations=[], reviews=[]),
         context=ContextPayload.empty(),
     )
@@ -493,7 +499,9 @@ def test_reviewer_prompts_finding_categories_in_system(
 ) -> None:
     ctx = make_review_ctx()
     cats = ["correctness", "security"]
-    system, _, _plans = DefaultPromptAssembler().reviewer_prompts(ctx, role_config, finding_categories=cats)
+    system, _, _plans = DefaultPromptAssembler().reviewer_prompts(
+        ctx, role_config, finding_categories=cats
+    )
     assert "Finding categories" in system
     assert "correctness" in system and "security" in system
 
@@ -679,8 +687,12 @@ def test_render_handoff_parts_no_pressure() -> None:
 
     parts = [
         HandoffPart(part_type="prose", priority="critical", content="key finding"),
-        HandoffPart(part_type="code", priority="standard", content="def f(): pass",
-                    metadata={"language": "python"}),
+        HandoffPart(
+            part_type="code",
+            priority="standard",
+            content="def f(): pass",
+            metadata={"language": "python"},
+        ),
     ]
     result = _render_handoff_parts(parts, _noop_compressor(), budget=None)
     assert "[critical][prose] key finding" in result
@@ -793,7 +805,7 @@ def _noop_compressor():
 
 
 def test_render_handoff_parts_passthrough_exceeds_budget() -> None:
-    """When passthrough content exceeds total budget, compressed parts get budget=0, not negative."""
+    """Passthrough over budget: compressed parts get budget zero, not negative."""
     from pawc_kit.contracts.artifacts import HandoffPart
     from pawc_kit.llm.prompts import _render_handoff_parts
 

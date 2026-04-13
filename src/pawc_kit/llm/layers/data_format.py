@@ -19,10 +19,19 @@ import re
 
 _logger = logging.getLogger("pawc_kit.llm.layers.data_format")
 
-_DATA_EXTENSIONS = frozenset({
-    ".json", ".yaml", ".yml", ".toml", ".csv", ".tsv", ".xml",
-    ".ndjson", ".jsonl",
-})
+_DATA_EXTENSIONS = frozenset(
+    {
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".csv",
+        ".tsv",
+        ".xml",
+        ".ndjson",
+        ".jsonl",
+    }
+)
 
 _MULTI_BLANK = re.compile(r"\n{3,}")
 _TRAILING_WS = re.compile(r"[ \t]+$", re.MULTILINE)

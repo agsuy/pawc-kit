@@ -182,7 +182,7 @@ class PhaseGraph:
     def from_config(
         phases: list[PhaseDefConfig],
         *,
-        default_handoff_mode: str = "flat",
+        default_handoff_mode: Literal["flat", "typed"] = "flat",
     ) -> PhaseGraph:
         """Build a :class:`PhaseGraph` from a list of :class:`PhaseDefConfig` objects.
 
@@ -208,7 +208,9 @@ class PhaseGraph:
                 request_changes_routing=list(p.request_changes_routing),
                 human=p.human,
                 max_feedback_rounds=p.max_feedback_rounds,
-                tool_capabilities=list(p.tool_capabilities) if p.tool_capabilities is not None else None,
+                tool_capabilities=list(p.tool_capabilities)
+                if p.tool_capabilities is not None
+                else None,
                 tool_services=list(p.tool_services) if p.tool_services is not None else None,
                 tool_overrides=dict(p.tool_overrides) if p.tool_overrides is not None else None,
                 llm_model=p.llm_model,
@@ -275,7 +277,9 @@ class PhaseGraph:
                     human=p.human,
                     max_feedback_rounds=p.max_rounds,
                     max_questions=p.max_questions,
-                    tool_capabilities=list(p.tool_capabilities) if p.tool_capabilities is not None else None,
+                    tool_capabilities=list(p.tool_capabilities)
+                    if p.tool_capabilities is not None
+                    else None,
                     tool_services=list(p.tool_services) if p.tool_services is not None else None,
                     tool_overrides=dict(p.tool_overrides) if p.tool_overrides is not None else None,
                 )

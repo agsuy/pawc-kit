@@ -21,11 +21,13 @@ def test_enrich_sets_compressible_from_registry() -> None:
 
 
 def test_enrich_preserves_existing_metadata() -> None:
-    parts = [HandoffPart(
-        part_type="code",
-        content="def foo():\n    pass",
-        metadata={"custom": "value"},
-    )]
+    parts = [
+        HandoffPart(
+            part_type="code",
+            content="def foo():\n    pass",
+            metadata={"custom": "value"},
+        )
+    ]
     result = enrich_handoff_parts(parts)
     assert result[0].metadata is not None
     assert result[0].metadata["custom"] == "value"
@@ -33,11 +35,13 @@ def test_enrich_preserves_existing_metadata() -> None:
 
 
 def test_enrich_does_not_override_existing_language() -> None:
-    parts = [HandoffPart(
-        part_type="code",
-        content="def foo():\n    pass",
-        metadata={"language": "custom_python"},
-    )]
+    parts = [
+        HandoffPart(
+            part_type="code",
+            content="def foo():\n    pass",
+            metadata={"language": "custom_python"},
+        )
+    ]
     result = enrich_handoff_parts(parts)
     assert result[0].metadata is not None
     assert result[0].metadata["language"] == "custom_python"

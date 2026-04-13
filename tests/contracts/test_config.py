@@ -633,7 +633,10 @@ def test_root_config_with_routing_rules() -> None:
 @pytest.mark.parametrize("mode", ["flat", "typed", None])
 def test_phase_def_config_handoff_mode(mode: str | None) -> None:
     cfg = PhaseDefConfig(
-        phase_id="work", role_id="worker", kind="executor", handoff_mode=mode,
+        phase_id="work",
+        role_id="worker",
+        kind="executor",
+        handoff_mode=mode,
     )
     assert cfg.handoff_mode == mode
 
@@ -646,7 +649,10 @@ def test_phase_def_config_handoff_mode_defaults_none() -> None:
 def test_phase_def_config_rejects_invalid_handoff_mode() -> None:
     with pytest.raises(ValidationError):
         PhaseDefConfig(
-            phase_id="work", role_id="worker", kind="executor", handoff_mode="custom",
+            phase_id="work",
+            role_id="worker",
+            kind="executor",
+            handoff_mode="custom",
         )
 
 

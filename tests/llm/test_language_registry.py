@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 from pawc_kit.llm.language_registry import (
-    DEFAULT_COMPRESSIBLE,
     LanguageConfig,
     LanguageRegistry,
     default_registry,
 )
-
 
 # ---------------------------------------------------------------------------
 # supported_languages / get_config
@@ -97,5 +95,7 @@ def test_resolve_compressible_critical_structured_false() -> None:
 
 def test_resolve_compressible_language_override() -> None:
     reg = LanguageRegistry()
-    reg.register(LanguageConfig("python", [("def ", ":")], compressible_overrides={"critical": True}))
+    reg.register(
+        LanguageConfig("python", [("def ", ":")], compressible_overrides={"critical": True})
+    )
     assert reg.resolve_compressible("critical", "reference", language="python") is True

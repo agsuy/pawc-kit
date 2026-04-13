@@ -11,7 +11,6 @@ from pawc_kit.llm.layers.adaptive import (
 from pawc_kit.llm.layers.priority_selection import PrioritySelectionLayer
 from pawc_kit.ports.compressor import CompressionLayer
 
-
 # ---------------------------------------------------------------------------
 # Protocol conformance
 # ---------------------------------------------------------------------------
@@ -129,6 +128,7 @@ def test_priority_original_order_preserved() -> None:
     result, _ = PrioritySelectionLayer().apply(text, budget=budget)
     # Find all section numbers in result
     import re
+
     numbers = [int(m.group(1)) for m in re.finditer(r"Section (\d+)", result)]
     assert numbers == sorted(numbers), "Chunks should be in original order"
 
@@ -254,9 +254,7 @@ def test_adaptive_code_light_strips_blanks() -> None:
 
 def test_adaptive_code_moderate_strips_comments() -> None:
     budget = len(_SAMPLE_PYTHON) // 3  # ratio ~3 → moderate
-    result, name = AdaptiveCompressionLayer().apply(
-        _SAMPLE_PYTHON, budget=budget, filename="f.py"
-    )
+    result, name = AdaptiveCompressionLayer().apply(_SAMPLE_PYTHON, budget=budget, filename="f.py")
     assert name is not None
     assert "moderate" in name
     assert "# A utility function" not in result
@@ -265,9 +263,7 @@ def test_adaptive_code_moderate_strips_comments() -> None:
 
 def test_adaptive_code_aggressive_outlines() -> None:
     budget = len(_SAMPLE_PYTHON) // 5  # ratio ~5 → aggressive
-    result, name = AdaptiveCompressionLayer().apply(
-        _SAMPLE_PYTHON, budget=budget, filename="f.py"
-    )
+    result, name = AdaptiveCompressionLayer().apply(_SAMPLE_PYTHON, budget=budget, filename="f.py")
     assert name is not None
     assert "aggressive" in name
     assert "def helper" in result or "def greet" in result
@@ -275,9 +271,7 @@ def test_adaptive_code_aggressive_outlines() -> None:
 
 def test_adaptive_code_emergency_signatures_only() -> None:
     budget = len(_SAMPLE_PYTHON) // 10  # ratio ~10 → emergency
-    result, name = AdaptiveCompressionLayer().apply(
-        _SAMPLE_PYTHON, budget=budget, filename="f.py"
-    )
+    result, name = AdaptiveCompressionLayer().apply(_SAMPLE_PYTHON, budget=budget, filename="f.py")
     assert name is not None
     assert "emergency" in name
     assert "import os" in result
@@ -327,9 +321,7 @@ def test_adaptive_prose_moderate_truncates_paragraphs() -> None:
 
 def test_adaptive_prose_aggressive_strips_tables() -> None:
     budget = len(_SAMPLE_PROSE) // 6
-    result, name = AdaptiveCompressionLayer().apply(
-        _SAMPLE_PROSE, budget=budget, filename="doc.md"
-    )
+    result, name = AdaptiveCompressionLayer().apply(_SAMPLE_PROSE, budget=budget, filename="doc.md")
     assert name is not None
     assert "aggressive" in name
     assert "table" in result.lower()
@@ -337,9 +329,7 @@ def test_adaptive_prose_aggressive_strips_tables() -> None:
 
 def test_adaptive_prose_emergency_headings_only() -> None:
     budget = len(_SAMPLE_PROSE) // 10
-    result, name = AdaptiveCompressionLayer().apply(
-        _SAMPLE_PROSE, budget=budget, filename="doc.md"
-    )
+    result, name = AdaptiveCompressionLayer().apply(_SAMPLE_PROSE, budget=budget, filename="doc.md")
     assert name is not None
     assert "emergency" in name
     assert "# Overview" in result
@@ -356,9 +346,7 @@ def test_adaptive_prose_emergency_headings_only() -> None:
 def test_adaptive_data_minified() -> None:
     text = '{\n  "key": "value",\n\n\n  "other": 1\n}'
     budget = int(len(text) / 1.5)
-    result, name = AdaptiveCompressionLayer().apply(
-        text, budget=budget, filename="config.json"
-    )
+    result, name = AdaptiveCompressionLayer().apply(text, budget=budget, filename="config.json")
     assert name is not None
     assert "data" in name
     # Blank lines should be collapsed
@@ -369,9 +357,7 @@ def test_adaptive_data_sampled() -> None:
     lines = [f'{{"id": {i}, "value": "item_{i}"}}' for i in range(100)]
     text = "\n".join(lines)
     budget = len(text) // 5
-    result, name = AdaptiveCompressionLayer().apply(
-        text, budget=budget, filename="data.jsonl"
-    )
+    result, name = AdaptiveCompressionLayer().apply(text, budget=budget, filename="data.jsonl")
     assert name is not None
     assert "more records" in result
 
@@ -397,7 +383,7 @@ def test_adaptive_custom_thresholds() -> None:
 
 
 def test_pipeline_layer_order_balanced() -> None:
-    """Balanced/compact/full: Lossless → DataFormat → PrioritySelection → LosslessCleanup → Adaptive."""
+    """Balanced stack: Lossless, DataFormat, priority selection, cleanup, adaptive."""
     from pawc_kit.contracts.config import ContextInjectionConfig
     from pawc_kit.llm.layers import (
         AdaptiveCompressionLayer,
@@ -431,7 +417,7 @@ def test_lossless_strategy_has_section_scoring_layer() -> None:
     assert len(pipeline._layers) == 2
     assert isinstance(pipeline._layers[0], LosslessLayer)
     assert isinstance(pipeline._layers[1], SectionScoringLayer)
-    assert not any(isinstance(l, PrioritySelectionLayer) for l in pipeline._layers)
+    assert not any(isinstance(layer, PrioritySelectionLayer) for layer in pipeline._layers)
 
 
 def test_lossless_layer_name_param() -> None:
@@ -716,9 +702,7 @@ def test_split_plan_batch_1_has_highest_priority() -> None:
     batch_1_scores = [s.score for s in result.split_plan.batches[0].sections]
     batch_2_scores = [s.score for s in result.split_plan.batches[1].sections]
     # Batch 1 should have higher average score than batch 2
-    assert sum(batch_1_scores) / len(batch_1_scores) >= sum(batch_2_scores) / len(
-        batch_2_scores
-    )
+    assert sum(batch_1_scores) / len(batch_1_scores) >= sum(batch_2_scores) / len(batch_2_scores)
 
 
 def test_split_plan_sections_in_document_order() -> None:
@@ -799,9 +783,7 @@ def test_phase_config_overflow_and_merge_strategy() -> None:
     assert phase.merge_strategy == "preserve_all"
 
     # Default: None (inherit from global)
-    phase2 = PhaseDefConfig(
-        phase_id="review", role_id="reviewer", kind="review"
-    )
+    phase2 = PhaseDefConfig(phase_id="review", role_id="reviewer", kind="review")
     assert phase2.overflow is None
     assert phase2.merge_strategy is None
 
@@ -921,9 +903,7 @@ def test_section_scoring_layer_data_bypass() -> None:
     layer = SectionScoringLayer()
     text = '{"key": "value"}'
 
-    result_text, layer_name = layer.apply(
-        text, budget=1, content_type="json", filename="data.json"
-    )
+    result_text, layer_name = layer.apply(text, budget=1, content_type="json", filename="data.json")
 
     assert result_text == text
     assert layer_name is None

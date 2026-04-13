@@ -159,8 +159,10 @@ class PrioritySelectionLayer:
             return content, None
 
         scored = score_sections(
-            content, filename=filename,
-            weights=self._weights, first_n=self._first_n,
+            content,
+            filename=filename,
+            weights=self._weights,
+            first_n=self._first_n,
         )
         if len(scored) <= 1:
             # Single chunk — nothing to select; truncate directly
@@ -198,9 +200,7 @@ class PrioritySelectionLayer:
             return best.content[:budget] + marker, "priority_selection"
 
         # Reassemble in document order with per-gap omission markers
-        text = _reassemble_with_gap_markers(
-            scored, selected_indices, filename, truncation_hint
-        )
+        text = _reassemble_with_gap_markers(scored, selected_indices, filename, truncation_hint)
 
         return text, "priority_selection"
 
@@ -243,8 +243,10 @@ class SectionScoringLayer:
             return content, None
 
         scored = score_sections(
-            content, filename=filename,
-            weights=self._weights, first_n=self._first_n,
+            content,
+            filename=filename,
+            weights=self._weights,
+            first_n=self._first_n,
         )
         if len(scored) <= 1:
             return content, None  # single chunk — nothing to split

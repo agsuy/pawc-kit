@@ -15,7 +15,7 @@ from pawc_kit.contracts.config import (
     RoleConfig,
 )
 from pawc_kit.contracts.errors import ConfigurationError
-
+from pawc_kit.llm.layers.pipeline import SectionSink
 from pawc_kit.ports.compressor import SplitPlan
 
 if TYPE_CHECKING:
@@ -38,7 +38,7 @@ this many characters of budget."""
 
 def _resolve_compressor(
     injection: ContextInjectionConfig,
-    section_sink: object | None = None,
+    section_sink: SectionSink | None = None,
 ) -> ContextCompressor:
     """Build a ``CompressionPipeline`` from the injection config's strategy.
 
@@ -492,8 +492,7 @@ def request_section(
                 )
             else:
                 text = text[:file_budget] + (
-                    f"\n[truncated at {file_budget} chars"
-                    f"; original {result.original_chars} chars]"
+                    f"\n[truncated at {file_budget} chars; original {result.original_chars} chars]"
                 )
         parts.append(f"\n### {filename}")
         parts.append(text)
@@ -633,13 +632,17 @@ def discovery_section(
             summary_text = summary_text[:cap] + "..."
         summary_budget = cfg.max_file_chars
         if cfg.context_budget is not None:
-            summary_budget = cfg.context_budget.per_file_ceiling or cfg.context_budget.total_file_chars
+            summary_budget = (
+                cfg.context_budget.per_file_ceiling or cfg.context_budget.total_file_chars
+            )
         parts.append(comp.compress(summary_text, budget=summary_budget).content)
 
     if handoff.parts:
         section_budget = None
         if cfg.context_budget:
-            section_budget = cfg.context_budget.per_file_ceiling or cfg.context_budget.total_file_chars
+            section_budget = (
+                cfg.context_budget.per_file_ceiling or cfg.context_budget.total_file_chars
+            )
         rendered = _render_handoff_parts(handoff.parts, comp, section_budget)
         if rendered:
             parts.append("\n### Typed Findings")

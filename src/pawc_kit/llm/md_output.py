@@ -11,14 +11,24 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field as dc_field
-from typing import Any, Callable
+from dataclasses import dataclass
+from dataclasses import field as dc_field
+from typing import TYPE_CHECKING, Any, Callable, Literal, cast
 
-_logger = logging.getLogger(__name__)
-
-from pawc_kit.contracts.artifacts import FileArtifact, FindingEntry, HandoffContext, HandoffPart
+from pawc_kit.contracts.artifacts import (
+    ContentPartType,
+    ContentPriority,
+    FileArtifact,
+    FindingEntry,
+    HandoffContext,
+    HandoffPart,
+)
 from pawc_kit.contracts.errors import LLMError
 
+if TYPE_CHECKING:
+    from pawc_kit.llm.roles import ExecutorOutput, ReviewerOutput
+
+_logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Section registry
@@ -193,7 +203,9 @@ def _recovery_prompts(*section_lists: list[SectionDef]) -> dict[str, str]:
 
 
 def _generate_format_instructions(
-    sections: list[SectionDef], *, suffix: str = "",
+    sections: list[SectionDef],
+    *,
+    suffix: str = "",
 ) -> str:
     lines = ["Structure your output using these section tags:"]
     for sd in sections:
@@ -216,7 +228,7 @@ TYPED_PARTS_INSTRUCTIONS = (
     '<pawc-part type="X" priority="Y" language="Z">...</pawc-part> '
     "where type is prose/code/structured/reference, priority is "
     "critical/standard/supplementary, and language is optional — "
-    "set it for code parts, e.g. language=\"python\")\n"
+    'set it for code parts, e.g. language="python")\n'
     "</pawc-section>"
 )
 
@@ -267,8 +279,7 @@ def _find_missing_standard(
             if sd.name in present_sections:
                 if sd.raise_on_falsy and not value:
                     raise LLMError(
-                        f"{sd.name} section present but parsed to {value!r}"
-                        " — requires human review"
+                        f"{sd.name} section present but parsed to {value!r} — requires human review"
                     )
                 if not value:
                     missing.append(sd.name)
@@ -316,13 +327,16 @@ def _split_sections(markdown: str, known: set[str]) -> dict[str, str]:
 
 
 SECTION_TAG_RE = re.compile(
-    r"<pawc-section\s+(.*?)>(.*?)</pawc-section>", re.DOTALL | re.IGNORECASE,
+    r"<pawc-section\s+(.*?)>(.*?)</pawc-section>",
+    re.DOTALL | re.IGNORECASE,
 )
 PART_TAG_RE = re.compile(
-    r"<pawc-part\s+(.*?)>(.*?)</pawc-part>", re.DOTALL | re.IGNORECASE,
+    r"<pawc-part\s+(.*?)>(.*?)</pawc-part>",
+    re.DOTALL | re.IGNORECASE,
 )
 FINDING_TAG_RE = re.compile(
-    r"<pawc-finding\s+(.*?)>(.*?)</pawc-finding>", re.DOTALL | re.IGNORECASE,
+    r"<pawc-finding\s+(.*?)>(.*?)</pawc-finding>",
+    re.DOTALL | re.IGNORECASE,
 )
 
 _KV_RE = re.compile(r"""(\w+)\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+))""")
@@ -336,7 +350,11 @@ def _parse_kv_attrs(attr_string: str) -> dict[str, str]:
     result: dict[str, str] = {}
     for m in _KV_RE.finditer(attr_string):
         key = m.group(1)
-        value = m.group(2) if m.group(2) is not None else (m.group(3) if m.group(3) is not None else m.group(4))
+        value = (
+            m.group(2)
+            if m.group(2) is not None
+            else (m.group(3) if m.group(3) is not None else m.group(4))
+        )
         result[key] = value or ""
     return result
 
@@ -350,19 +368,28 @@ _VALID_PRIORITIES = {"critical", "standard", "supplementary"}
 _VALID_SEVERITIES = {"critical", "high", "medium", "low", "info"}
 
 
-def _coerce_part_type(raw: str) -> str:
+def _coerce_part_type(raw: str) -> ContentPartType:
     low = raw.lower().strip()
-    return low if low in _VALID_PART_TYPES else "prose"
+    if low in _VALID_PART_TYPES:
+        return cast(ContentPartType, low)
+    return "prose"
 
 
-def _coerce_priority(raw: str) -> str:
+def _coerce_priority(raw: str) -> ContentPriority:
     low = raw.lower().strip()
-    return low if low in _VALID_PRIORITIES else "standard"
+    if low in _VALID_PRIORITIES:
+        return cast(ContentPriority, low)
+    return "standard"
 
 
-def _coerce_severity(raw: str) -> str:
+FindingSeverity = Literal["critical", "high", "medium", "low", "info"]
+
+
+def _coerce_severity(raw: str) -> FindingSeverity:
     low = raw.lower().strip()
-    return low if low in _VALID_SEVERITIES else "info"
+    if low in _VALID_SEVERITIES:
+        return cast(FindingSeverity, low)
+    return "info"
 
 
 # ---------------------------------------------------------------------------
@@ -379,12 +406,14 @@ def _parse_parts(text: str) -> list[HandoffPart]:
         lang = attrs.get("language")
         if lang:
             metadata = {"language": lang}
-        parts.append(HandoffPart(
-            part_type=_coerce_part_type(attrs.get("type", "prose")),
-            priority=_coerce_priority(attrs.get("priority", "standard")),
-            content=content.strip(),
-            metadata=metadata,
-        ))
+        parts.append(
+            HandoffPart(
+                part_type=_coerce_part_type(attrs.get("type", "prose")),
+                priority=_coerce_priority(attrs.get("priority", "standard")),
+                content=content.strip(),
+                metadata=metadata,
+            )
+        )
     return parts
 
 
@@ -404,7 +433,7 @@ def _parse_artifacts(text: str) -> list[FileArtifact]:
     return artifacts
 
 
-def parse_executor_output(markdown: str) -> "ExecutorOutput":
+def parse_executor_output(markdown: str) -> ExecutorOutput:
     """Parse markdown sections into ExecutorOutput."""
     from pawc_kit.llm.roles import ExecutorOutput
 
@@ -413,7 +442,10 @@ def parse_executor_output(markdown: str) -> "ExecutorOutput":
     expected = {s.name for s in EXECUTOR_SECTIONS}
     missing = expected - found
     if missing:
-        _logger.info("md_parse.executor_sections_missing", extra={"missing": sorted(missing), "found": sorted(found)})
+        _logger.info(
+            "md_parse.executor_sections_missing",
+            extra={"missing": sorted(missing), "found": sorted(found)},
+        )
 
     # Standard sections via registry
     fields = _parse_standard_fields(sections, EXECUTOR_SECTIONS)
@@ -431,7 +463,7 @@ def parse_executor_output(markdown: str) -> "ExecutorOutput":
     )
 
 
-def missing_sections(output: "ExecutorOutput", raw_text: str) -> list[str]:
+def missing_sections(output: ExecutorOutput, raw_text: str) -> list[str]:
     """Return list of section names that failed to parse or are empty.
 
     *raw_text* is the original markdown — used to determine which
@@ -459,14 +491,16 @@ def _parse_findings(text: str) -> list[FindingEntry]:
     for attr_str, content in FINDING_TAG_RE.findall(text):
         attrs = _parse_kv_attrs(attr_str)
         kv = _parse_finding_kv(content.strip())
-        findings.append(FindingEntry(
-            severity=_coerce_severity(attrs.get("severity", "info")),
-            category=attrs.get("category", "general"),
-            title=kv.get("title", ""),
-            details=kv.get("details", ""),
-            required_change=kv.get("required change") or None,
-            recommended_change=kv.get("recommended change") or None,
-        ))
+        findings.append(
+            FindingEntry(
+                severity=_coerce_severity(attrs.get("severity", "info")),
+                category=attrs.get("category", "general"),
+                title=kv.get("title", ""),
+                details=kv.get("details", ""),
+                required_change=kv.get("required change") or None,
+                recommended_change=kv.get("recommended change") or None,
+            )
+        )
     return findings
 
 
@@ -479,7 +513,11 @@ def _parse_finding_kv(text: str) -> dict[str, str]:
     for line in text.splitlines():
         stripped = line.strip()
         # Check if line starts a new key
-        match = re.match(r"^(Title|Details|Required change|Recommended change)\s*:\s*(.*)", stripped, re.IGNORECASE)
+        match = re.match(
+            r"^(Title|Details|Required change|Recommended change)\s*:\s*(.*)",
+            stripped,
+            re.IGNORECASE,
+        )
         if match:
             if current_key is not None:
                 result[current_key] = "\n".join(current_lines).strip()
@@ -494,7 +532,7 @@ def _parse_finding_kv(text: str) -> dict[str, str]:
     return result
 
 
-def parse_reviewer_output(markdown: str) -> "ReviewerOutput":
+def parse_reviewer_output(markdown: str) -> ReviewerOutput:
     """Parse markdown sections into ReviewerOutput."""
     from pawc_kit.llm.roles import ReviewerOutput
 
@@ -503,12 +541,13 @@ def parse_reviewer_output(markdown: str) -> "ReviewerOutput":
     expected = {s.name for s in REVIEWER_SECTIONS}
     missing = expected - found
     if missing:
-        _logger.info("md_parse.reviewer_sections_missing", extra={"missing": sorted(missing), "found": sorted(found)})
+        _logger.info(
+            "md_parse.reviewer_sections_missing",
+            extra={"missing": sorted(missing), "found": sorted(found)},
+        )
 
     if "DECISION" not in sections:
-        _logger.warning(
-            "Reviewer omitted DECISION section, defaulting to REQUEST_CHANGES"
-        )
+        _logger.warning("Reviewer omitted DECISION section, defaulting to REQUEST_CHANGES")
 
     # Standard sections via registry
     fields = _parse_standard_fields(sections, REVIEWER_SECTIONS)
@@ -526,7 +565,7 @@ def parse_reviewer_output(markdown: str) -> "ReviewerOutput":
     )
 
 
-def missing_reviewer_sections(output: "ReviewerOutput", raw_text: str) -> list[str]:
+def missing_reviewer_sections(output: ReviewerOutput, raw_text: str) -> list[str]:
     """Return list of section names that failed to parse or are empty.
 
     Raises :class:`LLMError` if a ``raise_on_falsy`` section (e.g.

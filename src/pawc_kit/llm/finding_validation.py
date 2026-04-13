@@ -27,10 +27,7 @@ async def async_validate_findings(  # NOTE: sync/async mirror of validate_findin
     backend: AsyncLLMBackend,
 ) -> list[FindingEntry]:
     """Async variant of :func:`validate_findings`."""
-    return [
-        await _async_validate_finding(f, i, decision, backend)
-        for i, f in enumerate(findings)
-    ]
+    return [await _async_validate_finding(f, i, decision, backend) for i, f in enumerate(findings)]
 
 
 def _validate_finding(
@@ -42,16 +39,27 @@ def _validate_finding(
     updates: dict[str, str] = {}
     if finding.severity not in VALID_SEVERITIES:
         updates["severity"] = _retry_finding_key(
-            backend, index, "severity", finding.severity, VALID_SEVERITIES,
+            backend,
+            index,
+            "severity",
+            finding.severity,
+            VALID_SEVERITIES,
         )
     if not finding.title or not finding.title.strip():
         updates["title"] = _retry_finding_key(
-            backend, index, "title", finding.title, None,
+            backend,
+            index,
+            "title",
+            finding.title,
+            None,
         )
     if decision == "REQUEST_CHANGES" and not finding.required_change:
         updates["required_change"] = _retry_finding_key(
-            backend, index, "required_change",
-            f"Finding: {finding.title} — {finding.details}", None,
+            backend,
+            index,
+            "required_change",
+            f"Finding: {finding.title} — {finding.details}",
+            None,
         )
     return finding.model_copy(update=updates) if updates else finding
 
@@ -65,16 +73,27 @@ async def _async_validate_finding(  # NOTE: sync/async mirror of _validate_findi
     updates: dict[str, str] = {}
     if finding.severity not in VALID_SEVERITIES:
         updates["severity"] = await _async_retry_finding_key(
-            backend, index, "severity", finding.severity, VALID_SEVERITIES,
+            backend,
+            index,
+            "severity",
+            finding.severity,
+            VALID_SEVERITIES,
         )
     if not finding.title or not finding.title.strip():
         updates["title"] = await _async_retry_finding_key(
-            backend, index, "title", finding.title, None,
+            backend,
+            index,
+            "title",
+            finding.title,
+            None,
         )
     if decision == "REQUEST_CHANGES" and not finding.required_change:
         updates["required_change"] = await _async_retry_finding_key(
-            backend, index, "required_change",
-            f"Finding: {finding.title} — {finding.details}", None,
+            backend,
+            index,
+            "required_change",
+            f"Finding: {finding.title} — {finding.details}",
+            None,
         )
     return finding.model_copy(update=updates) if updates else finding
 

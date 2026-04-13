@@ -62,13 +62,19 @@ def _event_message(event: WorkflowEvent) -> str:
         return "Run failed"
     if isinstance(event, ToolCallExecuted):
         status = "error" if event.is_error else "ok"
-        return f"Tool call {status}: {event.tool_name} ({event.integration_id}) {event.duration_ms}ms"
+        return (
+            f"Tool call {status}: {event.tool_name} ({event.integration_id}) {event.duration_ms}ms"
+        )
     if isinstance(event, ToolCallFailed):
         return f"Tool call failed: {event.tool_name} ({event.error_type}): {event.error}"
     if isinstance(event, ToolCallFallback):
-        return f"Tool fallback: {event.capability} {event.from_integration} -> {event.to_integration}"
+        return (
+            f"Tool fallback: {event.capability} {event.from_integration} -> {event.to_integration}"
+        )
     if isinstance(event, ToolBudgetExhausted):
-        return f"Tool budget exhausted: {event.limit_type} ({event.current_value}/{event.limit_value})"
+        return (
+            f"Tool budget exhausted: {event.limit_type} ({event.current_value}/{event.limit_value})"
+        )
     if isinstance(event, CompressionCompleted):
         ratio = f"{event.original_chars}->{event.final_chars}"
         dropped = f"{event.sections_dropped}/{event.sections_total} dropped"

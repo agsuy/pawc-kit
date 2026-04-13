@@ -405,11 +405,8 @@ class OpenTelemetryWorkflowObserver:
             if event.sections_dropped > 0:
                 self._compression_sections_dropped.add(event.sections_dropped, attrs)
             if event.final_chars > 0:
-                self._compression_ratio.record(
-                    event.original_chars / event.final_chars, attrs
-                )
+                self._compression_ratio.record(event.original_chars / event.final_chars, attrs)
             self._trace_compression_completed(event)
-
 
     def _trace_compression_completed(self, event: CompressionCompleted) -> None:
         active = self._active_spans.get(event.session_id)
@@ -429,8 +426,11 @@ class OpenTelemetryWorkflowObserver:
                 "compression.sections_selected": event.sections_selected,
                 "compression.sections_dropped": event.sections_dropped,
                 "compression.exceeded_budget": event.exceeded_budget,
-                **({"compression.quality_batches": event.quality_batches}
-                   if event.quality_batches is not None else {}),
+                **(
+                    {"compression.quality_batches": event.quality_batches}
+                    if event.quality_batches is not None
+                    else {}
+                ),
             },
         )
 

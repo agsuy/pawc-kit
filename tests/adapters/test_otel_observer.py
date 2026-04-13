@@ -845,10 +845,7 @@ def test_compression_completed_increments_invocations_counter() -> None:
     assert "pawc.compression.invocations" in metrics
     assert _sum_counter(metrics["pawc.compression.invocations"]) == 1
     attrs = _attrs(metrics["pawc.compression.invocations"])
-    assert any(
-        a.get("strategy") == "balanced" and a.get("overflow") == "economy"
-        for a in attrs
-    )
+    assert any(a.get("strategy") == "balanced" and a.get("overflow") == "economy" for a in attrs)
 
 
 def test_compression_completed_records_sections_dropped() -> None:

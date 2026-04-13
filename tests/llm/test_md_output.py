@@ -7,13 +7,13 @@ import logging
 import pytest
 
 from pawc_kit.llm.md_output import (
+    KNOWN_SECTIONS,
     _parse_confidence,
     _parse_decision,
     _split_sections,
+    missing_sections,
     parse_executor_output,
     parse_reviewer_output,
-    missing_sections,
-    KNOWN_SECTIONS,
 )
 
 
@@ -49,7 +49,11 @@ def test_parse_confidence_clamped() -> None:
 
 
 def test_split_sections_known_headers() -> None:
-    md = _sec("CONFIDENCE", "\n85\n") + _sec("SUMMARY", "\nAll good.\n") + _sec("HANDOFF", "\nDone.\n")
+    md = (
+        _sec("CONFIDENCE", "\n85\n")
+        + _sec("SUMMARY", "\nAll good.\n")
+        + _sec("HANDOFF", "\nDone.\n")
+    )
     sections = _split_sections(md, KNOWN_SECTIONS)
     assert sections["CONFIDENCE"] == "85"
     assert sections["SUMMARY"] == "All good."
@@ -64,9 +68,8 @@ def test_split_sections_ignores_unknown_headers() -> None:
 
 
 def test_split_sections_code_block_with_headers() -> None:
-    md = (
-        _sec("SUMMARY", "\nAnalysis done.\n")
-        + _sec("HANDOFF", "\nHere is code:\n```python\n## CONFIDENCE\ndef f(): pass\n```\n")
+    md = _sec("SUMMARY", "\nAnalysis done.\n") + _sec(
+        "HANDOFF", "\nHere is code:\n```python\n## CONFIDENCE\ndef f(): pass\n```\n"
     )
     sections = _split_sections(md, KNOWN_SECTIONS)
     assert "## CONFIDENCE" in sections["HANDOFF"]
@@ -98,13 +101,16 @@ def test_parse_parts_multiple() -> None:
         _sec("CONFIDENCE", "\n80\n")
         + _sec("SUMMARY", "\nDone.\n")
         + _sec("HANDOFF", "\nHandoff.\n")
-        + _sec("PARTS", "\n"
+        + _sec(
+            "PARTS",
+            "\n"
             '<pawc-part type="prose" priority="critical">\n'
             "Important finding.\n"
             "</pawc-part>\n"
             '<pawc-part type="code" priority="standard">\n'
             "```python\ndef foo(): pass\n```\n"
-            "</pawc-part>\n")
+            "</pawc-part>\n",
+        )
     )
     output = parse_executor_output(md)
     assert output.handoff.parts is not None
@@ -120,10 +126,13 @@ def test_parse_parts_with_code_fences() -> None:
         _sec("CONFIDENCE", "\n80\n")
         + _sec("SUMMARY", "\nDone.\n")
         + _sec("HANDOFF", "\nHandoff.\n")
-        + _sec("PARTS", "\n"
+        + _sec(
+            "PARTS",
+            "\n"
             '<pawc-part type="code" priority="standard">\n'
             "```python\ndef foo():\n    return 42\n```\n"
-            "</pawc-part>\n")
+            "</pawc-part>\n",
+        )
     )
     output = parse_executor_output(md)
     assert output.handoff.parts is not None
@@ -131,16 +140,25 @@ def test_parse_parts_with_code_fences() -> None:
 
 
 def test_parse_parts_empty_no_section() -> None:
-    md = _sec("CONFIDENCE", "\n80\n") + _sec("SUMMARY", "\nDone.\n") + _sec("HANDOFF", "\nHandoff.\n")
+    md = (
+        _sec("CONFIDENCE", "\n80\n")
+        + _sec("SUMMARY", "\nDone.\n")
+        + _sec("HANDOFF", "\nHandoff.\n")
+    )
     output = parse_executor_output(md)
     assert output.handoff.parts is None
 
 
 def test_parse_artifacts_list() -> None:
     md = (
-        _sec("CONFIDENCE", "\n80\n") + _sec("SUMMARY", "\nDone.\n") + _sec("HANDOFF", "\nH.\n")
-        + _sec("ARTIFACTS", "\n- ref: a.md | type: doc | description: Doc A\n"
-            "- ref: b.py | type: code | description: Code B\n")
+        _sec("CONFIDENCE", "\n80\n")
+        + _sec("SUMMARY", "\nDone.\n")
+        + _sec("HANDOFF", "\nH.\n")
+        + _sec(
+            "ARTIFACTS",
+            "\n- ref: a.md | type: doc | description: Doc A\n"
+            "- ref: b.py | type: code | description: Code B\n",
+        )
     )
     output = parse_executor_output(md)
     assert len(output.artifacts) == 2
@@ -149,7 +167,12 @@ def test_parse_artifacts_list() -> None:
 
 
 def test_parse_artifacts_empty() -> None:
-    md = _sec("CONFIDENCE", "\n80\n") + _sec("SUMMARY", "\nDone.\n") + _sec("HANDOFF", "\nH.\n") + _sec("ARTIFACTS", "\n")
+    md = (
+        _sec("CONFIDENCE", "\n80\n")
+        + _sec("SUMMARY", "\nDone.\n")
+        + _sec("HANDOFF", "\nH.\n")
+        + _sec("ARTIFACTS", "\n")
+    )
     output = parse_executor_output(md)
     assert output.artifacts == []
 
@@ -188,6 +211,7 @@ def test_confidence_present_nonzero_not_missing() -> None:
 def test_confidence_present_zero_raises() -> None:
     """CONFIDENCE present but parses to 0 → hard error, not recovery."""
     import pytest
+
     from pawc_kit.contracts.errors import LLMError
 
     md = _sec("CONFIDENCE", "\n0\n") + _sec("SUMMARY", "\nOK.\n") + _sec("HANDOFF", "\nH.\n")
@@ -199,6 +223,7 @@ def test_confidence_present_zero_raises() -> None:
 def test_confidence_present_unparseable_raises() -> None:
     """CONFIDENCE present but unparseable (e.g. 'high') → parses to 0 → hard error."""
     import pytest
+
     from pawc_kit.contracts.errors import LLMError
 
     md = _sec("CONFIDENCE", "\nhigh\n") + _sec("SUMMARY", "\nOK.\n") + _sec("HANDOFF", "\nH.\n")
@@ -288,7 +313,9 @@ def test_part_tag_extra_whitespace() -> None:
 def test_part_tag_self_closing_ignored() -> None:
     """Self-closing tag without closing tag — no content captured."""
     md = (
-        _sec("CONFIDENCE", "\n80\n") + _sec("SUMMARY", "\nDone.\n") + _sec("HANDOFF", "\nH.\n")
+        _sec("CONFIDENCE", "\n80\n")
+        + _sec("SUMMARY", "\nDone.\n")
+        + _sec("HANDOFF", "\nH.\n")
         + _sec("PARTS", '\n<pawc-part type="code" priority="standard" />\n')
     )
     output = parse_executor_output(md)
@@ -299,9 +326,14 @@ def test_part_tag_self_closing_ignored() -> None:
 def test_part_tag_language_attribute() -> None:
     """Language attribute on pawc-part is parsed into metadata."""
     md = (
-        _sec("CONFIDENCE", "\n80\n") + _sec("SUMMARY", "\nDone.\n") + _sec("HANDOFF", "\nH.\n")
-        + _sec("PARTS", '\n<pawc-part type="code" priority="standard" language="python">\n'
-            "def hello(): pass\n</pawc-part>\n")
+        _sec("CONFIDENCE", "\n80\n")
+        + _sec("SUMMARY", "\nDone.\n")
+        + _sec("HANDOFF", "\nH.\n")
+        + _sec(
+            "PARTS",
+            '\n<pawc-part type="code" priority="standard" language="python">\n'
+            "def hello(): pass\n</pawc-part>\n",
+        )
     )
     output = parse_executor_output(md)
     assert output.handoff.parts is not None
@@ -312,7 +344,9 @@ def test_part_tag_language_attribute() -> None:
 def test_part_tag_no_language_metadata_is_none() -> None:
     """Without language attribute, metadata stays None."""
     md = (
-        _sec("CONFIDENCE", "\n80\n") + _sec("SUMMARY", "\nDone.\n") + _sec("HANDOFF", "\nH.\n")
+        _sec("CONFIDENCE", "\n80\n")
+        + _sec("SUMMARY", "\nDone.\n")
+        + _sec("HANDOFF", "\nH.\n")
         + _sec("PARTS", '\n<pawc-part type="prose" priority="standard">\nSome text\n</pawc-part>\n')
     )
     output = parse_executor_output(md)
@@ -332,15 +366,17 @@ def _findings_md(open_tag: str, close_tag: str = "</pawc-finding>") -> str:
         + _sec("CONFIDENCE", "\n90\n")
         + _sec("COUNTS_VERIFIED", "\ntrue\n")
         + _sec("SUMMARY", "\nLooks good.\n")
-        + _sec("FINDINGS", f"\n{open_tag}\nTitle: Bug found\nDetails: Something is wrong\n{close_tag}\n")
+        + _sec(
+            "FINDINGS",
+            f"\n{open_tag}\nTitle: Bug found\nDetails: Something is wrong\n{close_tag}\n",
+        )
     )
 
 
 def test_finding_tag_canonical() -> None:
     from pawc_kit.llm.md_output import parse_reviewer_output
-    output = parse_reviewer_output(
-        _findings_md('<pawc-finding severity="high" category="logic">')
-    )
+
+    output = parse_reviewer_output(_findings_md('<pawc-finding severity="high" category="logic">'))
     assert len(output.findings) == 1
     assert output.findings[0].severity == "high"
     assert output.findings[0].category == "logic"
@@ -348,15 +384,15 @@ def test_finding_tag_canonical() -> None:
 
 def test_finding_tag_unquoted() -> None:
     from pawc_kit.llm.md_output import parse_reviewer_output
-    output = parse_reviewer_output(
-        _findings_md("<pawc-finding severity=high category=logic>")
-    )
+
+    output = parse_reviewer_output(_findings_md("<pawc-finding severity=high category=logic>"))
     assert len(output.findings) == 1
     assert output.findings[0].severity == "high"
 
 
 def test_finding_tag_capitalized() -> None:
     from pawc_kit.llm.md_output import parse_reviewer_output
+
     output = parse_reviewer_output(
         _findings_md('<Pawc-Finding severity="high" category="logic">', "</Pawc-Finding>")
     )
@@ -365,15 +401,15 @@ def test_finding_tag_capitalized() -> None:
 
 def test_finding_tag_single_quoted() -> None:
     from pawc_kit.llm.md_output import parse_reviewer_output
-    output = parse_reviewer_output(
-        _findings_md("<pawc-finding severity='high' category='logic'>")
-    )
+
+    output = parse_reviewer_output(_findings_md("<pawc-finding severity='high' category='logic'>"))
     assert len(output.findings) == 1
     assert output.findings[0].severity == "high"
 
 
 def test_finding_tag_spaces_around_equals() -> None:
     from pawc_kit.llm.md_output import parse_reviewer_output
+
     output = parse_reviewer_output(
         _findings_md('<pawc-finding severity = "high" category = "logic">')
     )
@@ -389,6 +425,7 @@ def test_finding_tag_spaces_around_equals() -> None:
 def test_severity_coerced_to_lowercase() -> None:
     """Capitalized severity should be lowercased, not crash."""
     from pawc_kit.llm.md_output import parse_reviewer_output
+
     output = parse_reviewer_output(
         _findings_md('<pawc-finding severity="Critical" category="logic">')
     )
@@ -399,6 +436,7 @@ def test_severity_coerced_to_lowercase() -> None:
 def test_severity_unknown_defaults_to_info() -> None:
     """Unknown severity falls back to 'info'."""
     from pawc_kit.llm.md_output import parse_reviewer_output
+
     output = parse_reviewer_output(
         _findings_md('<pawc-finding severity="severe" category="logic">')
     )
@@ -409,6 +447,7 @@ def test_severity_unknown_defaults_to_info() -> None:
 def test_part_type_coerced_to_lowercase() -> None:
     """Capitalized part_type should be lowercased, not crash."""
     from pawc_kit.llm.md_output import _parse_parts
+
     parts = _parse_parts('<pawc-part type="Code" priority="standard">body</pawc-part>')
     assert len(parts) == 1
     assert parts[0].part_type == "code"
@@ -417,6 +456,7 @@ def test_part_type_coerced_to_lowercase() -> None:
 def test_part_type_unknown_defaults_to_prose() -> None:
     """Unknown part_type falls back to 'prose'."""
     from pawc_kit.llm.md_output import _parse_parts
+
     parts = _parse_parts('<pawc-part type="diagram" priority="standard">body</pawc-part>')
     assert len(parts) == 1
     assert parts[0].part_type == "prose"
@@ -425,6 +465,7 @@ def test_part_type_unknown_defaults_to_prose() -> None:
 def test_priority_unknown_defaults_to_standard() -> None:
     """Unknown priority falls back to 'standard'."""
     from pawc_kit.llm.md_output import _parse_parts
+
     parts = _parse_parts('<pawc-part type="prose" priority="urgent">body</pawc-part>')
     assert len(parts) == 1
     assert parts[0].priority == "standard"

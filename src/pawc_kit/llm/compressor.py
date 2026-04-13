@@ -251,7 +251,9 @@ class SemanticCompressor:
 
         truncated = False
         if budget is not None and len(text) > budget:
-            text = text[:budget] + f"\n[truncated at {budget} chars; original {original_chars} chars]"
+            text = (
+                text[:budget] + f"\n[truncated at {budget} chars; original {original_chars} chars]"
+            )
             truncated = True
 
         return CompressionResult(
@@ -317,7 +319,9 @@ class MarkdownCompressor:
 
         truncated = False
         if budget is not None and len(text) > budget:
-            text = text[:budget] + f"\n[truncated at {budget} chars; original {original_chars} chars]"
+            text = (
+                text[:budget] + f"\n[truncated at {budget} chars; original {original_chars} chars]"
+            )
             truncated = True
 
         return CompressionResult(
@@ -386,7 +390,9 @@ class PassthroughCompressor:
         text = content
         truncated = False
         if budget is not None and len(text) > budget:
-            text = text[:budget] + f"\n[truncated at {budget} chars; original {original_chars} chars]"
+            text = (
+                text[:budget] + f"\n[truncated at {budget} chars; original {original_chars} chars]"
+            )
             truncated = True
         return CompressionResult(
             content=text,

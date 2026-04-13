@@ -717,14 +717,20 @@ def test_phase_definition_handoff_mode_default() -> None:
 
 def test_phase_definition_handoff_mode_typed() -> None:
     phase = PhaseDefinition(
-        phase_id="work", role_id="worker", kind="executor", handoff_mode="typed",
+        phase_id="work",
+        role_id="worker",
+        kind="executor",
+        handoff_mode="typed",
     )
     assert phase.handoff_mode == "typed"
 
 
 def test_to_dict_includes_handoff_mode_typed() -> None:
     phase = PhaseDefinition(
-        phase_id="work", role_id="worker", kind="executor", handoff_mode="typed",
+        phase_id="work",
+        role_id="worker",
+        kind="executor",
+        handoff_mode="typed",
     )
     d = phase.to_dict()
     assert d["handoff_mode"] == "typed"
@@ -739,7 +745,10 @@ def test_to_dict_excludes_handoff_mode_flat() -> None:
 def test_from_config_passes_handoff_mode() -> None:
     phases = [
         PhaseDefConfig(
-            phase_id="work", role_id="worker", kind="executor", handoff_mode="typed",
+            phase_id="work",
+            role_id="worker",
+            kind="executor",
+            handoff_mode="typed",
         ),
     ]
     graph = PhaseGraph.from_config(phases)
@@ -757,7 +766,10 @@ def test_from_config_inherits_workflow_default() -> None:
 def test_from_config_phase_override_beats_workflow_default() -> None:
     phases = [
         PhaseDefConfig(
-            phase_id="work", role_id="worker", kind="executor", handoff_mode="flat",
+            phase_id="work",
+            role_id="worker",
+            kind="executor",
+            handoff_mode="flat",
         ),
     ]
     graph = PhaseGraph.from_config(phases, default_handoff_mode="typed")

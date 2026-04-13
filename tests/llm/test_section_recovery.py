@@ -6,10 +6,9 @@ import asyncio
 
 from pawc_kit.llm.mock import AsyncMockBackend, MockBackend
 from pawc_kit.llm.section_recovery import (
+    _MAX_RECOVERY_CONTEXT,
     RecoveryMetadata,
     RecoveryResult,
-    _HEADER_CONTEXT,
-    _MAX_RECOVERY_CONTEXT,
     _build_recovery_context,
     _parse_batch_response,
     async_recover_section,
@@ -182,7 +181,6 @@ def test_context_includes_response_header() -> None:
 
 def test_context_falls_back_to_head_tail_when_no_header() -> None:
     """No <pawc-section> tag found -> falls back to head+tail."""
-    half = _MAX_RECOVERY_CONTEXT // 2
     start_marker = "START_HERE"
     end_marker = "END_HERE"
     text = start_marker + "x" * (_MAX_RECOVERY_CONTEXT + 1000) + end_marker

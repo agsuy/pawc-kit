@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from pawc_kit.llm.backend import CompletionResult, TokenUsage
+from pawc_kit.llm.backend import TokenUsage
 from pawc_kit.llm.mock import AsyncMockBackend, MockBackend
 from pawc_kit.llm.retry import (
     RetryPolicy,
@@ -37,7 +37,9 @@ def test_returns_last_result_when_all_retries_exhausted() -> None:
 def test_custom_is_acceptable() -> None:
     backend = MockBackend(["short", "this is long enough"])
     result = complete_with_retry(
-        backend, "sys", "usr",
+        backend,
+        "sys",
+        "usr",
         is_acceptable=lambda t: len(t) > 10,
     )
     assert result.text == "this is long enough"
@@ -47,7 +49,9 @@ def test_custom_is_acceptable() -> None:
 def test_max_retries_zero_means_single_attempt() -> None:
     backend = MockBackend([""])
     result = complete_with_retry(
-        backend, "sys", "usr",
+        backend,
+        "sys",
+        "usr",
         policy=RetryPolicy(max_retries=0),
     )
     assert result.text == ""
@@ -84,10 +88,14 @@ def test_async_returns_on_first_acceptable() -> None:
 
 def test_async_retries_on_empty() -> None:
     backend = AsyncMockBackend(["", "ok"])
-    result = asyncio.run(async_complete_with_retry(
-        backend, "sys", "usr",
-        policy=RetryPolicy(backoff_base=0),  # no delay in tests
-    ))
+    result = asyncio.run(
+        async_complete_with_retry(
+            backend,
+            "sys",
+            "usr",
+            policy=RetryPolicy(backoff_base=0),  # no delay in tests
+        )
+    )
     assert result.text == "ok"
     assert backend.call_count == 2
 
@@ -99,10 +107,14 @@ def test_async_accumulates_usage() -> None:
     backend.queue("", usage=usage1)
     backend.queue("ok", usage=usage2)
 
-    result = asyncio.run(async_complete_with_retry(
-        backend, "sys", "usr",
-        policy=RetryPolicy(backoff_base=0),
-    ))
+    result = asyncio.run(
+        async_complete_with_retry(
+            backend,
+            "sys",
+            "usr",
+            policy=RetryPolicy(backoff_base=0),
+        )
+    )
     assert result.usage is not None
     assert result.usage.prompt_tokens == 10
     assert result.usage.total_tokens == 17

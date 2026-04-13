@@ -20,14 +20,22 @@ def _sec(name: str, content: str = "") -> str:
 
 
 def _executor_md() -> str:
-    return _sec("CONFIDENCE", "\n90\n") + _sec("SUMMARY", "\nDone\n") + _sec("HANDOFF", "\nhandoff\n") + _sec("ARTIFACTS")
+    return (
+        _sec("CONFIDENCE", "\n90\n")
+        + _sec("SUMMARY", "\nDone\n")
+        + _sec("HANDOFF", "\nhandoff\n")
+        + _sec("ARTIFACTS")
+    )
 
 
 def _reviewer_md() -> str:
     return (
-        _sec("DECISION", "\nAPPROVE\n") + _sec("CONFIDENCE", "\n88\n")
-        + _sec("COUNTS_VERIFIED", "\ntrue\n") + _sec("SUMMARY", "\nGood\n")
-        + _sec("FINDINGS") + _sec("TARGET_PHASE")
+        _sec("DECISION", "\nAPPROVE\n")
+        + _sec("CONFIDENCE", "\n88\n")
+        + _sec("COUNTS_VERIFIED", "\ntrue\n")
+        + _sec("SUMMARY", "\nGood\n")
+        + _sec("FINDINGS")
+        + _sec("TARGET_PHASE")
     )
 
 

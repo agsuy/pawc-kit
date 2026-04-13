@@ -11,7 +11,6 @@ from pawc_kit.contracts.config import (
 )
 from pawc_kit.llm.compressor import (
     ChunkType,
-    MarkdownCompressor,
     PassthroughCompressor,
     SemanticCompressor,
     apply_chunk_policy,
@@ -368,7 +367,9 @@ def test_resolve_compressor_balanced_returns_pipeline_with_layers() -> None:
     cfg = ContextInjectionConfig(strategy="balanced")
     result = _resolve_compressor(cfg)
     assert isinstance(result, CompressionPipeline)
-    assert len(result._layers) == 5  # Lossless + DataFormat + PrioritySelection + LosslessCleanup + Adaptive
+    assert (
+        len(result._layers) == 5
+    )  # Lossless + DataFormat + PrioritySelection + LosslessCleanup + Adaptive
 
 
 def test_resolve_compressor_lossless_strategy_returns_lossless_and_scoring() -> None:

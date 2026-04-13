@@ -44,7 +44,11 @@ def _executor_md(
     parts: str = "",
 ) -> str:
     """Build markdown matching executor format instructions."""
-    md = _sec("CONFIDENCE", f"\n{confidence}\n") + _sec("SUMMARY", f"\n{summary}\n") + _sec("HANDOFF", f"\n{handoff}\n")
+    md = (
+        _sec("CONFIDENCE", f"\n{confidence}\n")
+        + _sec("SUMMARY", f"\n{summary}\n")
+        + _sec("HANDOFF", f"\n{handoff}\n")
+    )
     if parts:
         md += _sec("PARTS", f"\n{parts}\n")
     md += _sec("ARTIFACTS", f"\n{artifacts}\n")
@@ -82,8 +86,11 @@ def _reviewer_md(
 
 
 def _finding_md(
-    severity: str = "high", category: str = "logic", title: str = "issue",
-    details: str = "details", required_change: str = "fix it",
+    severity: str = "high",
+    category: str = "logic",
+    title: str = "issue",
+    details: str = "details",
+    required_change: str = "fix it",
 ) -> str:
     """Build markdown for a single <pawc-finding> block."""
     return (
@@ -232,10 +239,15 @@ def test_reviewer_role_returns_review_result() -> None:
 def test_reviewer_role_request_changes_decision() -> None:
     backend = MockBackend()
     finding = _finding_md(severity="critical", title="bug", details="d")
-    backend.queue(_reviewer_md(
-        decision="REQUEST_CHANGES", confidence=60,
-        counts_verified="false", summary="needs work", findings=finding,
-    ))
+    backend.queue(
+        _reviewer_md(
+            decision="REQUEST_CHANGES",
+            confidence=60,
+            counts_verified="false",
+            summary="needs work",
+            findings=finding,
+        )
+    )
     role = LLMReviewerRole(backend)
     result = role.review(make_review_ctx())
     assert result.decision.decision == "REQUEST_CHANGES"
@@ -329,10 +341,17 @@ def _reviewer_md_with_findings(
     counts_verified: str | None = None,
 ) -> str:
     """Build reviewer markdown with findings."""
-    cv = counts_verified if counts_verified is not None else ("true" if decision == "APPROVE" else "false")
+    cv = (
+        counts_verified
+        if counts_verified is not None
+        else ("true" if decision == "APPROVE" else "false")
+    )
     return _reviewer_md(
-        decision=decision, confidence=70, counts_verified=cv,
-        summary="review", findings=findings_md,
+        decision=decision,
+        confidence=70,
+        counts_verified=cv,
+        summary="review",
+        findings=findings_md,
     )
 
 
@@ -362,12 +381,17 @@ def test_quality_gate_override_routes_via_request_changes_routing() -> None:
     )
     ctx = ReviewRequest(
         session=SessionState(
-            session_id="s1", skill_name="skill", skill_version="1.0.0",
-            started_at="2026-01-01T00:00:00Z", current_phase="review",
+            session_id="s1",
+            skill_name="skill",
+            skill_version="1.0.0",
+            started_at="2026-01-01T00:00:00Z",
+            current_phase="review",
             status="in_progress",
         ),
         phase=PhaseDefinition(
-            phase_id="review", role_id="reviewer-role", kind="review",
+            phase_id="review",
+            role_id="reviewer-role",
+            kind="review",
             can_request_changes_from=["research", "synthesis"],
             request_changes_routing=[
                 RoutingRuleConfig(target="research", confidence_lt=50),
@@ -392,19 +416,28 @@ def test_request_changes_routes_via_confidence_rules() -> None:
     from pawc_kit.workflow.roles import WorkflowHistoryView
 
     backend = MockBackend()
-    backend.queue(_reviewer_md(
-        decision="REQUEST_CHANGES", confidence=30,
-        counts_verified="false", summary="needs fixes",
-    ))
+    backend.queue(
+        _reviewer_md(
+            decision="REQUEST_CHANGES",
+            confidence=30,
+            counts_verified="false",
+            summary="needs fixes",
+        )
+    )
     role = LLMReviewerRole(backend)
     ctx = ReviewRequest(
         session=SessionState(
-            session_id="s1", skill_name="skill", skill_version="1.0.0",
-            started_at="2026-01-01T00:00:00Z", current_phase="review",
+            session_id="s1",
+            skill_name="skill",
+            skill_version="1.0.0",
+            started_at="2026-01-01T00:00:00Z",
+            current_phase="review",
             status="in_progress",
         ),
         phase=PhaseDefinition(
-            phase_id="review", role_id="reviewer-role", kind="review",
+            phase_id="review",
+            role_id="reviewer-role",
+            kind="review",
             can_request_changes_from=["research", "synthesis"],
             request_changes_routing=[
                 RoutingRuleConfig(target="research", confidence_lt=50),
@@ -492,11 +525,13 @@ def test_counts_verified_false_logs_warning(caplog: object) -> None:
     import logging
 
     backend = MockBackend()
-    backend.queue(_reviewer_md_with_findings(
-        "APPROVE",
-        _finding_md(severity="low"),
-        counts_verified="false",
-    ))
+    backend.queue(
+        _reviewer_md_with_findings(
+            "APPROVE",
+            _finding_md(severity="low"),
+            counts_verified="false",
+        )
+    )
     role = LLMReviewerRole(backend)
     with caplog.at_level(logging.WARNING):  # type: ignore[union-attr]
         role.review(make_review_ctx())
@@ -506,11 +541,13 @@ def test_counts_verified_false_logs_warning(caplog: object) -> None:
 def test_counts_verified_gate_overrides_approve() -> None:
     """APPROVE + counts_verified=false + require_counts_verified gate → REQUEST_CHANGES."""
     backend = MockBackend()
-    backend.queue(_reviewer_md_with_findings(
-        "APPROVE",
-        _finding_md(severity="low"),
-        counts_verified="false",
-    ))
+    backend.queue(
+        _reviewer_md_with_findings(
+            "APPROVE",
+            _finding_md(severity="low"),
+            counts_verified="false",
+        )
+    )
     role = LLMReviewerRole(
         backend,
         quality_gates={
@@ -528,11 +565,13 @@ def test_counts_verified_gate_overrides_approve() -> None:
 def test_counts_verified_true_no_override() -> None:
     """APPROVE + counts_verified=true → passes through, no override."""
     backend = MockBackend()
-    backend.queue(_reviewer_md_with_findings(
-        "APPROVE",
-        _finding_md(severity="low"),
-        counts_verified="true",
-    ))
+    backend.queue(
+        _reviewer_md_with_findings(
+            "APPROVE",
+            _finding_md(severity="low"),
+            counts_verified="true",
+        )
+    )
     role = LLMReviewerRole(
         backend,
         quality_gates={
@@ -746,10 +785,15 @@ def test_reviewer_role_request_changes_routing_not_applied() -> None:
     """chosen_next must be None for REQUEST_CHANGES regardless of routing rules."""
     backend = MockBackend()
     finding = _finding_md(severity="high", title="issue", details="d")
-    backend.queue(_reviewer_md(
-        decision="REQUEST_CHANGES", confidence=40,
-        counts_verified="false", summary="needs work", findings=finding,
-    ))
+    backend.queue(
+        _reviewer_md(
+            decision="REQUEST_CHANGES",
+            confidence=40,
+            counts_verified="false",
+            summary="needs work",
+            findings=finding,
+        )
+    )
     rules = [_rule("next-a", lt=50), _rule("next-b", gte=50)]
     role = LLMReviewerRole(backend)
     result = role.review(_make_review_ctx_with_routing(rules))
@@ -1021,7 +1065,9 @@ def test_executor_recovery_missing_summary() -> None:
     """Response omits SUMMARY → recovery call fills it."""
     backend = MockBackend()
     # Main response: has CONFIDENCE and HANDOFF, no SUMMARY
-    backend.queue(_sec("CONFIDENCE", "\n85\n") + _sec("HANDOFF", "\nhandoff info\n") + _sec("ARTIFACTS", "\n"))
+    backend.queue(
+        _sec("CONFIDENCE", "\n85\n") + _sec("HANDOFF", "\nhandoff info\n") + _sec("ARTIFACTS", "\n")
+    )
     # Recovery response for SUMMARY (first in missing list)
     backend.queue("Recovered summary")
     role = LLMExecutorRole(backend)
@@ -1036,7 +1082,9 @@ def test_executor_recovery_missing_handoff() -> None:
     """Response omits HANDOFF → recovery call fills it."""
     backend = MockBackend()
     # Main response: has CONFIDENCE and SUMMARY, no HANDOFF
-    backend.queue(_sec("CONFIDENCE", "\n85\n") + _sec("SUMMARY", "\nDone\n") + _sec("ARTIFACTS", "\n"))
+    backend.queue(
+        _sec("CONFIDENCE", "\n85\n") + _sec("SUMMARY", "\nDone\n") + _sec("ARTIFACTS", "\n")
+    )
     # Recovery response for HANDOFF
     backend.queue("Recovered handoff")
     role = LLMExecutorRole(backend)
@@ -1089,8 +1137,10 @@ def test_reviewer_recovery_missing_summary() -> None:
     backend = MockBackend()
     # Main response: has everything except SUMMARY
     backend.queue(
-        _sec("DECISION", "\nAPPROVE\n") + _sec("CONFIDENCE", "\n88\n")
-        + _sec("COUNTS_VERIFIED", "\ntrue\n") + _sec("FINDINGS", "\n")
+        _sec("DECISION", "\nAPPROVE\n")
+        + _sec("CONFIDENCE", "\n88\n")
+        + _sec("COUNTS_VERIFIED", "\ntrue\n")
+        + _sec("FINDINGS", "\n")
         + _sec("TARGET_PHASE", "\n")
     )
     # Recovery response for SUMMARY
@@ -1121,7 +1171,9 @@ def test_executor_confidence_missing_triggers_recovery() -> None:
     """No CONFIDENCE section → recovery extracts it."""
     backend = MockBackend()
     # Main response: missing CONFIDENCE
-    backend.queue(_sec("SUMMARY", "\nDone\n") + _sec("HANDOFF", "\nhandoff\n") + _sec("ARTIFACTS", "\n"))
+    backend.queue(
+        _sec("SUMMARY", "\nDone\n") + _sec("HANDOFF", "\nhandoff\n") + _sec("ARTIFACTS", "\n")
+    )
     # Recovery for CONFIDENCE (first in missing list — required standard)
     backend.queue("85")
     role = LLMExecutorRole(backend)
@@ -1133,7 +1185,12 @@ def test_executor_confidence_missing_triggers_recovery() -> None:
 def test_executor_confidence_zero_raises() -> None:
     """CONFIDENCE=0 → hard error, not recovery."""
     backend = MockBackend()
-    backend.queue(_sec("CONFIDENCE", "\n0\n") + _sec("SUMMARY", "\nDone\n") + _sec("HANDOFF", "\nhandoff\n") + _sec("ARTIFACTS", "\n"))
+    backend.queue(
+        _sec("CONFIDENCE", "\n0\n")
+        + _sec("SUMMARY", "\nDone\n")
+        + _sec("HANDOFF", "\nhandoff\n")
+        + _sec("ARTIFACTS", "\n")
+    )
     role = LLMExecutorRole(backend)
     with pytest.raises(LLMError, match="CONFIDENCE.*requires human review"):
         role.execute(make_exec_ctx())
@@ -1153,7 +1210,9 @@ def test_executor_confidence_recovery_returns_zero_raises() -> None:
     """CONFIDENCE absent → recovery returns '0' → hard error after recovery."""
     backend = MockBackend()
     # Main response: no CONFIDENCE
-    backend.queue(_sec("SUMMARY", "\nDone\n") + _sec("HANDOFF", "\nhandoff\n") + _sec("ARTIFACTS", "\n"))
+    backend.queue(
+        _sec("SUMMARY", "\nDone\n") + _sec("HANDOFF", "\nhandoff\n") + _sec("ARTIFACTS", "\n")
+    )
     # Recovery returns 0
     backend.queue("0")
     role = LLMExecutorRole(backend)
@@ -1168,7 +1227,9 @@ def test_executor_confidence_recovery_returns_zero_raises() -> None:
 
 def test_executor_recovery_logs_triggered_and_completed(caplog: pytest.LogCaptureFixture) -> None:
     backend = MockBackend()
-    backend.queue(_sec("CONFIDENCE", "\n85\n") + _sec("SUMMARY", "\nDone\n") + _sec("ARTIFACTS", "\n"))
+    backend.queue(
+        _sec("CONFIDENCE", "\n85\n") + _sec("SUMMARY", "\nDone\n") + _sec("ARTIFACTS", "\n")
+    )
     backend.queue("handoff summary")  # recovery for HANDOFF
     role = LLMExecutorRole(backend)
     with caplog.at_level(logging.INFO, logger="pawc_kit.llm.roles"):
@@ -1182,7 +1243,12 @@ def test_executor_recovery_logs_triggered_and_completed(caplog: pytest.LogCaptur
 
 def test_executor_no_recovery_no_log(caplog: pytest.LogCaptureFixture) -> None:
     backend = MockBackend()
-    backend.queue(_sec("CONFIDENCE", "\n85\n") + _sec("SUMMARY", "\nDone\n") + _sec("HANDOFF", "\nhandoff\n") + _sec("ARTIFACTS", "\n"))
+    backend.queue(
+        _sec("CONFIDENCE", "\n85\n")
+        + _sec("SUMMARY", "\nDone\n")
+        + _sec("HANDOFF", "\nhandoff\n")
+        + _sec("ARTIFACTS", "\n")
+    )
     role = LLMExecutorRole(backend)
     with caplog.at_level(logging.INFO, logger="pawc_kit.llm.roles"):
         role.execute(make_exec_ctx())
