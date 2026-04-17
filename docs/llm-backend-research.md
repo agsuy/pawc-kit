@@ -698,199 +698,152 @@ Two independent work streams remain:
 
 ---
 
-#### 4a. Pack ingestion (not started)
+#### 4a. Tool result persistence (done)
 
-**Problem:** tool execution results (`url_fetch`, `document_ingest`) stay in the
-LLM conversation history and are never persisted to the context pack.  Fetched
+**Problem:** tool execution results (`url_fetch`, `document_ingest`, MCP tools,
+etc.) stay in the LLM conversation history and are never persisted.  Fetched
 source material is ephemeral — once the agentic loop finishes, the raw content
 is gone.
 
-**Current flow:**
+**Persistence infrastructure (already in place):**
 
-1. `DiscoveryService.start()` wires two independent subsystems onto the backend:
-   integration context (tools via `ToolExecutor`) and the context pack writer
-   (via `AsyncWorkflowEngine`).  These subsystems have no reference to each other.
-2. During the tool loop in `PawcLlmBackend._complete_with_tools()`, each call
-   builds a `ToolExecutionContext` with only `session_id`, `phase_id`, `role_id`,
-   `tool_round`, `timeout_ms`.  Results return as `ToolExecResult(content, ...)`
-   and go into the LLM conversation as `ToolResultMessage`.  Nothing reaches the
-   pack.
-3. Pack writes only happen later, when the engine processes the LLM's
-   *synthesized* output (`ExecutorOutput.files`) — not the raw fetched content.
+- `PersistingContextPackWriter` dual-writes to FS + DB (`pack_files` table)
+- `AsyncArtifactWriter.save_file()` writes to session run directory + DB mirroring
+- `ToolCallExecuted` / `ToolCallFailed` events capture call metadata with OTel
+  correlation — but not the fetched content itself
+- SQLite and PostgreSQL adapters are fully symmetric; both support `pack_files`
+  and `artifacts` tables
+
+**Design decisions:**
+
+| Decision | Choice |
+|----------|--------|
+| Write target (discovery) | Pack via `write_discovery_file()` → dual-write FS + DB |
+| Write target (execution) | Session run dir via `artifact_writer.save_file()` |
+| Path (discovery) | `internal/tool-results/{phase_id}/{tool}_{round}_{hash6}.md` |
+| Path (execution) | `tool-results/{phase_id}/{tool}_{round}_{hash6}.md` |
+| Which tools | All successful tool calls |
+| Error results | Skip — `ToolCallFailed` events capture them via OTel |
+| File format | YAML frontmatter (verbose) + raw content |
+| Who writes | `ToolResultPersister` — dedicated class |
+| Persister write target | Write callback (`Callable[[str, str], Awaitable[...]]`) bound via `partial()` at wiring time |
+| ToolExecutor → Persister | Direct reference on constructor |
+| context_id / session_id | Bound into the callback via `partial()` — persister is session-scoped |
+| Scope | Both discovery and execution workflows |
+
+**File format example:**
+
+```markdown
+---
+tool: url_fetch
+tool_call_id: tc_abc123
+phase_id: research
+role_id: researcher
+session_id: sess-001
+round: 1
+timestamp: 2026-04-13T14:32:01Z
+url: https://example.com/docs/api
+content_type: text/html
+duration_ms: 1200
+cost: 0.0
+---
+
+<fetched content>
+```
+
+Generic fields (`tool`, `phase_id`, `round`, etc.) come from `ToolExecutionContext`.
+Tool-specific fields (`url`, `content_type`, etc.) come from `result.metadata`.
+
+**Filename scheme:**
+
+`{tool}_{round}_{hash6}.md` — tool name, zero-padded round from the agentic
+loop, first 6 chars of SHA-256 of `result.content` for uniqueness.
+
+```
+# Discovery pack:
+contexts/{context_id}/internal/tool-results/research/url_fetch_01_f7a3b2.md
+contexts/{context_id}/internal/tool-results/research/document_ingest_02_8b4e11.md
+
+# Execution session:
+sessions/execution/{session_id}/tool-results/synthesis/url_fetch_01_c9e1d4.md
+```
+
+**Architecture — `ToolResultPersister`:**
+
+A small dedicated class that owns formatting (frontmatter + content) and
+filename generation.  Receives a write callback at construction — does not
+know whether it writes to a pack or a session run directory.
+
+```
+ToolResultPersister(write: Callable[[str, str], Awaitable[...]])
+  .persist(result: ToolExecResult, context: ToolExecutionContext) -> None
+    -> builds frontmatter from context + result.metadata
+    -> generates filename: {tool}_{round}_{hash6}.md
+    -> generates rel_path: {prefix}/{phase_id}/{filename}
+    -> calls self._write(rel_path, frontmatter + content)
+```
+
+Wiring:
+
+```python
+# Discovery (services/discovery.py):
+writer = self._build_context_pack_writer(session_id, ...)
+persister = ToolResultPersister(
+    write=partial(writer.write_discovery_file, context_id),
+    path_prefix="internal/tool-results",
+)
+
+# Execution (session/workflow wiring):
+persister = ToolResultPersister(
+    write=partial(artifact_writer.save_file, session_id),
+    path_prefix="tool-results",
+)
+```
 
 **Coupling with current code (uncommitted):**
 
-The `context_id` already exists in the request path (`req.context.context_id`)
-and is used by the invoker for compression persistence, but it never reaches the
-tool execution path.  The chain that needs modification:
+`ToolExecutor` calls `self._persister.persist(result, exec_ctx)` between
+`budget.record_call()` (`:174`) and `truncate_result()` (`:177`) — the
+full `result.content` is still available at that point.
 
-```
-DiscoveryService._wire_integration_context()       # has pack writer, doesn't pass it
-  -> IntegrationContext(tool_executor, registry, budget_config)  # no writer field
-    -> PawcLlmBackend.set_integration_context()
-
-LLMRoleInvoker._set_tool_context(phase, iteration)  # has req.context.context_id, doesn't pass it
-  -> PawcLlmBackend.set_invocation_context(capabilities, services, resolution_map, iteration)
-    -> _InvocationToolState(capabilities, services, resolution_map, iteration)  # no context_id
-
-PawcLlmBackend._complete_with_tools()
-  -> ToolExecutionContext(session_id, phase_id, role_id, tool_round, timeout_ms)  # no context_id
-    -> ToolExecutor.execute()
-      -> integration.execute()  -> ToolExecResult(content, metadata)
-      -> truncate_result(content)  # full content lost after this point
-      -> return truncated result
+```python
+# tool_executor.py :174-178
+self._budget.record_call(result.cost)
+if self._persister and not result.is_error:
+    await self._persister.persist(result, exec_ctx)
+effective_max = PER_TOOL_MAX_RESULT_CHARS.get(tool_name, self._max_result_chars)
+truncated_content = truncate_result(result.content, effective_max)
 ```
 
 **Required changes (pawc-server):**
 
-| File | Current interface | Change |
-|------|-------------------|--------|
-| `integrations/contracts.py` | `ToolExecutionContext(session_id, phase_id, role_id, tool_round, timeout_ms)` | Add `context_id: str \| None = None` |
-| `integrations/tool_executor.py` | `__init__(registry, event_emitter, budget_tracker, capability_bindings, max_result_chars)` | Add `pack_writer` param; after raw result but before `truncate_result()`, write full content to `request/` for ACQUIRE-category tools |
-| `execution/llm/pawc_llm_backend.py` | `IntegrationContext(tool_executor, registry, budget_config)` / `_InvocationToolState(capabilities, services, resolution_map, iteration)` / `set_invocation_context(capabilities, services, resolution_map, iteration)` | Add `pack_writer` to `IntegrationContext`; add `context_id` to `_InvocationToolState` and `set_invocation_context()`; pass `context_id` into `ToolExecutionContext` construction |
-| `execution/llm/invoker.py` | `_set_tool_context(phase, iteration)` — has `req.context.context_id` at call sites but doesn't forward it | Accept and forward `context_id` into `set_invocation_context()` |
-| `services/discovery.py` | `_wire_integration_context(session_id, llm_backend, runtime_payload)` — creates `ToolExecutor` without writer; has `_build_context_pack_writer()` on same class | Pass the writer into `ToolExecutor` constructor |
+| File | What to add |
+|------|-------------|
+| `integrations/tool_result_persister.py` | New file: `ToolResultPersister` class (frontmatter, filename, write callback) |
+| `integrations/tool_executor.py` `:91` | Optional `persister: ToolResultPersister \| None` on constructor |
+| `integrations/tool_executor.py` `:174` | Call `persister.persist()` pre-truncation for successful results |
+| `services/discovery.py` `:317` | Build pack writer before `_wire_integration_context()`; construct persister with `partial(writer.write_discovery_file, context_id)` |
+| `services/discovery.py` `:554` | Pass persister into `ToolExecutor` constructor |
+| Execution workflow wiring | Construct persister with `partial(artifact_writer.save_file, session_id)` and pass to `ToolExecutor` |
 
-**Key design decisions:**
+**No changes needed to:**
 
-- **ToolExecutor writes, not tools.** Tools remain pack-unaware.  The executor
-  decides which results to persist based on the integration's capability category
-  (`ACQUIRE`).  This keeps the tool interface clean.
-- **Write before truncation.**  `ToolExecutor` truncates results (default 4000
-  chars) before returning to the LLM.  The insertion point is between
-  `budget.record_call()` and `truncate_result()` — the full `result.content` is
-  still available there.
-- **No pawc-kit changes.**  `write_discovery_file` already accepts free-form
-  `rel_path` — writing to `request/` is valid.  `PersistingContextPackWriter`
-  already handles dual-write (filesystem + SQLite).
-- **No concurrency concerns.**  `_complete_with_tools` executes tool calls
-  sequentially within a single invocation.
+- `ToolExecutionContext` — no `context_id` field needed (bound in callback)
+- `IntegrationContext` — no `pack_writer` field needed (persister is on executor)
+- `_InvocationToolState` / `set_invocation_context()` — unchanged
+- `LLMRoleInvoker` / `_set_tool_context()` — unchanged
+- `PawcLlmBackend` — unchanged
+- pawc-kit — unchanged
 
 ---
 
-#### 4b. LLM response streaming to end users (not started)
+#### 4b. LLM response streaming — DEFERRED
 
-**Problem:** the full streaming infrastructure exists at the sidecar layer
-(`/v1/stream`) and Python client layer (`PawcLlmClient.stream()` yields typed
-`StreamEvent` objects: `text_delta`, `thinking_delta`, `toolcall_start`,
-`toolcall_end`, `done`, `error`).  But `PawcLlmBackend` always calls
-`complete()`, and no endpoint forwards token deltas to frontends.
-
-**What exists vs what doesn't:**
-
-| Layer | Status |
-|-------|--------|
-| Sidecar `/v1/stream` | Working |
-| Python client `stream()` | Working — yields typed `StreamEvent` objects |
-| `PawcLlmBackend` streaming | Not implemented — always calls `complete()` via `_complete_with_trace()` |
-| Workflow event SSE (admin) | Working — but coarse-grained lifecycle events polled from Postgres at 500ms |
-| Token-level SSE endpoint | Not implemented |
-| Per-session broadcast channel | Not implemented |
-
-**Coupling with current code (uncommitted):**
-
-The bottleneck is `_complete_with_trace()` — every LLM call funnels through it
-to `self._client.complete()`.  The tool loop calls it per-round.  The invoker
-never calls the backend directly — it instantiates pawc-kit roles
-(`AsyncLLMExecutorRole` / `AsyncLLMReviewerRole`) which call `backend.complete()`
-internally.
-
-```
-admin_routes.py
-  GET /api/admin/workflows/sessions/{sid}/events/stream   # workflow events only
-    -> EventSourceResponse(_event_stream(...))
-    -> event_service.stream() -> SELECT ... WHERE id > last_id  (500ms poll)
-
-routes.py                                                  # no streaming endpoints
-
-LLMRoleInvoker.invoke_executor()
-  -> AsyncLLMExecutorRole(backend=...).execute(req)        # kit role calls backend.complete()
-    -> PawcLlmBackend.complete()
-      -> _semaphore (held for entire call)
-      -> _complete_with_tools() or _do_complete()
-        -> _complete_with_trace()
-          -> self._client.complete()                       # always non-streaming
-
-LLMRoleInvoker._batch_execute()                            # quality-mode batching
-  -> for batch in plan.batches:
-       AsyncLLMExecutorRole(backend=...).execute(batch_req) # N sequential LLM calls
-  -> _merge_execution_results(results)                     # merge after all complete
-
-PawcLlmClient.stream()                                     # exists, never called
-  -> POST /v1/stream -> SSE -> yields StreamEvent objects
-  -> missing: response_schema, tool_choice params
-```
-
-**Streaming call chain needed:**
-
-```
-Frontend (SSE client)
-  -> GET /api/admin/workflows/sessions/{sid}/llm/stream (new endpoint)
-    -> per-session asyncio broadcast channel (Queue or similar)
-      -> PawcLlmBackend._stream_with_trace()  (new, parallel to _complete_with_trace)
-        -> PawcLlmClient.stream()
-          -> pawc-llm sidecar /v1/stream
-```
-
-**Required changes:**
-
-1. **`PawcLlmBackend`** (pawc-server) — new `_stream_with_trace()` parallel to
-   `_complete_with_trace()`.  The OTel span must stay open until the iterator is
-   exhausted (not closed in `finally` after a single await).  A streaming tool
-   loop variant streams tokens per-round and emits synthetic events for tool
-   boundaries.  Must accumulate the final `CompletionResult` from
-   `StreamDoneEvent` so the caller still gets a materialized result.
-
-2. **Invoker / role bypass** (pawc-server) — the invoker cannot stream through
-   pawc-kit roles since `AsyncLLMExecutorRole.execute()` calls
-   `backend.complete()` internally and returns `ExecutionResult`.  Recommended:
-   the backend pushes tokens to a side-channel (a `token_sink` callback or
-   `asyncio.Queue` on `LLMInvocationContext`) while still returning
-   `CompletionResult` to the role.  This keeps the kit protocol unchanged — the
-   role sees a normal complete() return, and the transport sees a token stream.
-
-3. **Transport** (pawc-server) — new SSE endpoint in `admin_routes.py`
-   alongside the existing workflow event stream.  Uses the proven
-   `EventSourceResponse` + `AsyncIterator` pattern from `sse_starlette`
-   (already a dependency).  One connection per active session.
-
-4. **`PawcLlmClient.stream()`** (pawc-llm) — add `response_schema` and
-   `tool_choice` params for parity with `complete()`, or accept that the final
-   round of a tool loop falls back to non-streaming for schema-constrained
-   completions.
-
-**Key complications:**
-
-- **Agentic tool loop.**  Each round in `_complete_with_tools()` produces a
-  separate stream.  Between rounds, tools execute (pausing text flow).  The
-  endpoint must emit synthetic events for tool boundaries and must NOT forward
-  per-round `done` events as "completion done" — only the final round's text
-  matters for the parsed result.
-
-- **pawc-kit protocol is complete-only.**  `AsyncLLMBackend.complete()` returns
-  `CompletionResult`, not an iterator.  Streaming should be a pawc-server-only
-  concern.  The recommended approach is a side-channel (token sink on invocation
-  context) so the kit role layer is unaware of streaming.
-
-- **`client.stream()` has no `response_schema` or `tool_choice`.**  The tool
-  loop's final round may use `response_schema` for structured output.  If
-  streaming the final round, it must fall back to non-streaming for
-  schema-constrained completions, or the sidecar needs schema support on the
-  stream endpoint.
-
-- **Semaphore hold time.**  `PawcLlmBackend._semaphore` gates concurrent
-  requests.  A streaming request holds it for the entire stream duration instead
-  of a request-response cycle.  May need a separate or larger semaphore for
-  streaming.
-
-- **Separate channel from workflow events.**  The existing event SSE polls
-  Postgres at 500ms.  Token streaming is near-real-time from the sidecar.
-  These are fundamentally different data models (durable `WorkflowEvent` vs
-  ephemeral `StreamEvent`) and must be separate endpoints.
-
-- **Quality-mode batching.**  The invoker's `_batch_execute()` runs N sequential
-  LLM calls for split plans, then merges.  Each batch would stream independently.
-  The user sees partial output from each batch interleaved with pauses.
+Moved to [`docs/nice-to-have.md`](nice-to-have.md).  The existing workflow event
+SSE (phase transitions, tool calls, reviews) already provides real-time
+visibility.  Token-level streaming would improve UX but requires significant
+plumbing (side-channel through kit role layer, streaming tool loop, separate SSE
+endpoint) with no current frontend consumer.  Revisit when a UI needs it.
 
 ---
 
