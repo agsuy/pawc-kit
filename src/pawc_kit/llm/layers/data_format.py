@@ -4,7 +4,7 @@ Converts data files (JSON, CSV, YAML, XML) into more token-efficient
 formats.  Only applies to files detected as data — code and prose files
 pass through unchanged.
 
-Detection uses magika when available, falling back to filename extension.
+Detection uses magika for content-type classification.
 
 Implements the ``CompressionLayer`` protocol.
 """
@@ -17,21 +17,9 @@ import json
 import logging
 import re
 
-_logger = logging.getLogger("pawc_kit.llm.layers.data_format")
+from pawc_kit.llm.layers.detection import detect_data_format
 
-_DATA_EXTENSIONS = frozenset(
-    {
-        ".json",
-        ".yaml",
-        ".yml",
-        ".toml",
-        ".csv",
-        ".tsv",
-        ".xml",
-        ".ndjson",
-        ".jsonl",
-    }
-)
+_logger = logging.getLogger("pawc_kit.llm.layers.data_format")
 
 _MULTI_BLANK = re.compile(r"\n{3,}")
 _TRAILING_WS = re.compile(r"[ \t]+$", re.MULTILINE)
@@ -107,31 +95,6 @@ def _generic_minify(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# File type detection
-# ---------------------------------------------------------------------------
-
-
-def _detect_data_type(
-    filename: str | None,
-    content_type: str | None,
-    content: str,
-) -> str | None:
-    """Detect the data format.  Returns extension-like key or None if not data."""
-    if content_type:
-        ct = content_type.lower()
-        for ext in (".json", ".csv", ".yaml", ".yml", ".xml", ".toml", ".jsonl"):
-            if ext.lstrip(".") in ct:
-                return ext
-
-    if filename:
-        ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-        if ext in _DATA_EXTENSIONS:
-            return ext
-
-    return None
-
-
-# ---------------------------------------------------------------------------
 # DataFormatLayer
 # ---------------------------------------------------------------------------
 
@@ -170,7 +133,7 @@ class DataFormatLayer:
         if not self._eager:
             return content, None
 
-        data_type = _detect_data_type(filename, content_type, content)
+        data_type = detect_data_format(content, filename=filename, content_type=content_type)
         if data_type is None:
             return content, None
 

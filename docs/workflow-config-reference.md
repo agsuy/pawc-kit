@@ -132,19 +132,13 @@ Controls `request_section()` and `discovery_section()` (and thus `DefaultPromptA
 
 | Field | Type | Default | Notes |
 |-------|------|---------|--------|
-| `mode` | `str` | `"simple"` | `simple`, `semantic`, `none`. `semantic` requires optional dependency **semantic-text-splitter** (`pawc-kit[semantic]`). |
-| `chunk_size` | `int` | `2000` | Minimum `100`. |
-| `policies` | `dict[str, ChunkPolicyConfig]` | `{}` | For `mode: semantic`, keys must be `ChunkType` **values**: `heading`, `paragraph`, `list`, `code`, `table`, `diagram`. Unknown keys are logged and ignored. |
+| `data_format` | `DataFormatConfig` | see below | Data format conversion settings. |
 
-#### `ChunkPolicyConfig` (values under `compression.policies.<name>`)
+#### `data_format` (`DataFormatConfig`)
 
-| Field | Type | Default |
-|-------|------|---------|
-| `action` | `str` | `"keep"` — one of `keep`, `truncate`, `collapse`, `strip` |
-| `max_sentences` | `int \| null` | `null` |
-| `max_items` | `int \| null` | `null` |
-| `max_lines` | `int \| null` | `null` |
-| `max_rows` | `int \| null` | `null` |
+| Field | Type | Default | Notes |
+|-------|------|---------|--------|
+| `eager` | `bool` | `true` | Convert data files (JSON→toon, CSV→JSONL, etc.) immediately. Lossless strategy always overrides to `false`. |
 
 #### Discovery section names
 
@@ -245,7 +239,7 @@ Rules are evaluated **in order**; first match wins.
 | `context_sources` described as “prior phases” | **Wrong** — values are **child context pack ids** (`metadata.context_id`). **Fixed in template.** |
 | `role_overrides` “merged into RoleConfig” | **Oversimplified** — true for kit LLM roles; always on `phase` in requests. **Fixed in template.** |
 | `human` “after this phase” / on executor example | **Misleading** — only meaningful on **review** phases; sync and async engines both honor it. **Fixed in template.** |
-| `compression.policies` keys `prose` / “prose, code” | **Wrong** — semantic mode uses `heading`, `paragraph`, `list`, `code`, `table`, `diagram`. **Fixed in template.** |
+| `compression.policies` | **Removed** — per-chunk policies were part of the deleted SemanticCompressor. Compression is now controlled by `context_injection.strategy`. |
 | `role_id` “RoleConfig key” | **Loose** — binds `register_role` / invoker; role YAML uses `name` too. **Fixed in template.** |
 | `on_complete` “where to go when finishes” | **Incomplete** — omit routing / `chosen_next`. **Fixed in template.** |
 

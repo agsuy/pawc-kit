@@ -20,7 +20,6 @@ EXPECTED_CONTRACTS = frozenset(
     {
         "AgentUsedEntry",
         "ArtifactRef",
-        "ChunkPolicyConfig",
         "CompositionEntry",
         "CompressionConfig",
         "ContentPartType",

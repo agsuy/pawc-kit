@@ -13,7 +13,8 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Literal
+
+from pawc_kit.llm.layers.detection import ContentCategory, detect_category
 
 # ---------------------------------------------------------------------------
 # Compression levels
@@ -50,109 +51,8 @@ STRATEGY_THRESHOLDS: dict[str, AdaptiveThresholds] = {
     "full": AdaptiveThresholds(light=1.0, moderate=1.2, aggressive=2.0, emergency=4.0),
 }
 
-ContentCategory = Literal["code", "prose", "data"]
-
 # ---------------------------------------------------------------------------
-# Filename → content category heuristic
-# ---------------------------------------------------------------------------
-
-_CODE_EXTENSIONS = frozenset(
-    {
-        ".py",
-        ".js",
-        ".ts",
-        ".jsx",
-        ".tsx",
-        ".java",
-        ".go",
-        ".rs",
-        ".rb",
-        ".c",
-        ".cpp",
-        ".h",
-        ".hpp",
-        ".cs",
-        ".swift",
-        ".kt",
-        ".scala",
-        ".sh",
-        ".bash",
-        ".zsh",
-        ".lua",
-        ".r",
-        ".m",
-        ".sql",
-        ".graphql",
-        ".vue",
-        ".svelte",
-        ".php",
-        ".pl",
-        ".ex",
-        ".exs",
-        ".zig",
-    }
-)
-_DATA_EXTENSIONS = frozenset(
-    {
-        ".json",
-        ".yaml",
-        ".yml",
-        ".toml",
-        ".csv",
-        ".tsv",
-        ".xml",
-        ".ndjson",
-        ".jsonl",
-        ".parquet",
-        ".avro",
-    }
-)
-_PROSE_EXTENSIONS = frozenset(
-    {
-        ".md",
-        ".rst",
-        ".txt",
-        ".adoc",
-        ".tex",
-        ".org",
-        ".html",
-        ".htm",
-    }
-)
-
-
-def _guess_category(
-    filename: str | None,
-    content_type: str | None,
-) -> ContentCategory:
-    """Best-effort content categorisation from filename or explicit type.
-
-    In Phase 4 this is replaced by magika detection. For Phase 2 the
-    layer uses filename extension as a practical heuristic.
-    """
-    if content_type:
-        ct = content_type.lower()
-        if ct in ("code", "prose", "data"):
-            return ct  # type: ignore[return-value]
-        if "json" in ct or "csv" in ct or "xml" in ct or "yaml" in ct:
-            return "data"
-        if "python" in ct or "javascript" in ct or "java" in ct:
-            return "code"
-
-    if filename:
-        ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-        if ext in _CODE_EXTENSIONS:
-            return "code"
-        if ext in _DATA_EXTENSIONS:
-            return "data"
-        if ext in _PROSE_EXTENSIONS:
-            return "prose"
-
-    return "prose"  # default
-
-
-# ---------------------------------------------------------------------------
-# Code compression actions (regex-based; Phase 4 can add AST via tree-sitter)
+# Code compression actions
 # ---------------------------------------------------------------------------
 
 _PYTHON_COMMENT = re.compile(r"^\s*#(?!\!).*$", re.MULTILINE)
@@ -227,6 +127,177 @@ def _code_signatures(text: str) -> str:
         elif stripped.startswith(("import ", "from ")):
             result.append(line)
     return "\n".join(result).strip()
+
+
+# ---------------------------------------------------------------------------
+# Tree-sitter code compression (falls back to regex above when no grammar)
+# ---------------------------------------------------------------------------
+
+
+def _code_strip_comments(text: str, *, filename: str | None = None) -> str:
+    """Moderate: remove comments and docstrings via tree-sitter AST.
+
+    Falls back to :func:`_code_minified` (regex) when *filename* is
+    ``None`` or no grammar is available.
+    """
+    if filename is None:
+        return _code_minified(text)
+
+    try:
+        from pawc_kit.llm.ast_utils import parse_code
+    except ImportError:
+        return _code_minified(text)
+
+    source = text.encode()
+    tree = parse_code(source, filename)
+    if tree is None:
+        return _code_minified(text)
+
+    removals: list[tuple[int, int]] = []
+
+    def _collect(node: object) -> None:
+        if node.type == "comment":  # type: ignore[union-attr]
+            start = node.start_byte  # type: ignore[union-attr]
+            end = node.end_byte  # type: ignore[union-attr]
+            if end < len(source) and source[end : end + 1] == b"\n":
+                end += 1
+            removals.append((start, end))
+        # Python docstrings: expression_statement > string as first child of block
+        if (
+            node.type == "expression_statement"  # type: ignore[union-attr]
+            and node.child_count == 1  # type: ignore[union-attr]
+            and node.children[0].type == "string"  # type: ignore[union-attr]
+            and node.parent  # type: ignore[union-attr]
+            and node.parent.type == "block"  # type: ignore[union-attr]
+            and node.parent.children[0] is node  # type: ignore[union-attr]
+        ):
+            start = node.start_byte  # type: ignore[union-attr]
+            end = node.end_byte  # type: ignore[union-attr]
+            if end < len(source) and source[end : end + 1] == b"\n":
+                end += 1
+            removals.append((start, end))
+        for child in node.children:  # type: ignore[union-attr]
+            _collect(child)
+
+    _collect(tree.root_node)
+
+    result = bytearray(source)
+    for start, end in sorted(removals, reverse=True):
+        result[start:end] = b""
+
+    text_result = result.decode()
+    text_result = _BLANK_LINES.sub("\n", text_result)
+    return text_result.strip()
+
+
+def _code_outlined_ts(text: str, *, filename: str | None = None) -> str:
+    """Aggressive: function/class signatures + first docstring via tree-sitter.
+
+    Recurses into class bodies to extract method signatures — unlike the
+    regex version which only matches signatures at column 0.
+
+    Falls back to :func:`_code_outlined` (regex) when *filename* is
+    ``None`` or no grammar is available.
+    """
+    if filename is None:
+        return _code_outlined(text)
+
+    try:
+        from pawc_kit.llm.ast_utils import _get_signature, parse_code
+    except ImportError:
+        return _code_outlined(text)
+
+    source = text.encode()
+    tree = parse_code(source, filename)
+    if tree is None:
+        return _code_outlined(text)
+
+    parts: list[str] = []
+
+    def _process_node(node: object) -> None:
+        ntype = node.type  # type: ignore[union-attr]
+        if ntype in ("function_definition", "class_definition", "decorated_definition"):
+            target = node
+            if ntype == "decorated_definition":
+                for child in node.children:  # type: ignore[union-attr]
+                    if child.type in ("function_definition", "class_definition"):
+                        target = child
+                        break
+
+            parts.append(_get_signature(target, source))
+
+            # Extract first docstring if present
+            body = target.child_by_field_name("body")  # type: ignore[union-attr]
+            if body and body.children:
+                first = body.children[0]
+                if (
+                    first.type == "expression_statement"
+                    and first.child_count == 1
+                    and first.children[0].type == "string"
+                ):
+                    parts.append(source[first.start_byte : first.end_byte].decode())
+
+            # Recurse into class body for methods
+            if target.type == "class_definition" and body:  # type: ignore[union-attr]
+                for child in body.children:
+                    _process_node(child)
+
+        elif ntype in ("import_statement", "import_from_statement", "future_import_statement"):
+            parts.append(source[node.start_byte : node.end_byte].decode())  # type: ignore[union-attr]
+
+    for child in tree.root_node.children:
+        _process_node(child)
+
+    return "\n".join(parts).strip()
+
+
+def _code_signatures_ts(text: str, *, filename: str | None = None) -> str:
+    """Emergency: signature lines only via tree-sitter.
+
+    Same as :func:`_code_outlined_ts` but without docstrings. Recurses
+    into class bodies for method signatures.
+
+    Falls back to :func:`_code_signatures` (regex) when *filename* is
+    ``None`` or no grammar is available.
+    """
+    if filename is None:
+        return _code_signatures(text)
+
+    try:
+        from pawc_kit.llm.ast_utils import _get_signature, parse_code
+    except ImportError:
+        return _code_signatures(text)
+
+    source = text.encode()
+    tree = parse_code(source, filename)
+    if tree is None:
+        return _code_signatures(text)
+
+    parts: list[str] = []
+
+    def _process_node(node: object) -> None:
+        ntype = node.type  # type: ignore[union-attr]
+        if ntype in ("function_definition", "class_definition", "decorated_definition"):
+            target = node
+            if ntype == "decorated_definition":
+                for child in node.children:  # type: ignore[union-attr]
+                    if child.type in ("function_definition", "class_definition"):
+                        target = child
+                        break
+            parts.append(_get_signature(target, source))
+            # Recurse into class body
+            if target.type == "class_definition":  # type: ignore[union-attr]
+                body = target.child_by_field_name("body")  # type: ignore[union-attr]
+                if body:
+                    for child in body.children:
+                        _process_node(child)
+        elif ntype in ("import_statement", "import_from_statement"):
+            parts.append(source[node.start_byte : node.end_byte].decode())  # type: ignore[union-attr]
+
+    for child in tree.root_node.children:
+        _process_node(child)
+
+    return "\n".join(parts).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -377,8 +448,8 @@ class AdaptiveCompressionLayer:
     transformations: code format escalation (compact → minified → outlined
     → signatures), prose truncation, or data sampling.
 
-    Content type is determined from ``content_type`` (explicit), then
-    ``filename`` extension.  In Phase 4 this is replaced by magika.
+    Content type is determined via magika detection (explicit
+    ``content_type`` overrides when provided).
 
     If ``budget`` is ``None`` or content already fits, the layer is a
     no-op and returns ``(content, None)``.
@@ -422,14 +493,25 @@ class AdaptiveCompressionLayer:
         if level is CompressionLevel.NONE:
             return content, None
 
-        category = _guess_category(filename, content_type)
-        actions = _CATEGORY_ACTIONS.get(category, _PROSE_ACTIONS)
-        action = actions.get(level)
+        category = detect_category(content, filename=filename, content_type=content_type)
 
-        if action is None:
-            return content, None
+        # Code: use tree-sitter functions (which fall back to regex internally)
+        if category == "code":
+            if level is CompressionLevel.LIGHT:
+                compressed = _code_compact(content)
+            elif level is CompressionLevel.MODERATE:
+                compressed = _code_strip_comments(content, filename=filename)
+            elif level is CompressionLevel.AGGRESSIVE:
+                compressed = _code_outlined_ts(content, filename=filename)
+            else:  # EMERGENCY
+                compressed = _code_signatures_ts(content, filename=filename)
+        else:
+            actions = _CATEGORY_ACTIONS.get(category, _PROSE_ACTIONS)
+            action = actions.get(level)
+            if action is None:
+                return content, None
+            compressed = action(content)
 
-        compressed = action(content)
         layer_name = f"adaptive_{category}_{level.value}"
         return compressed, layer_name
 

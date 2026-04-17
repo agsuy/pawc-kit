@@ -39,6 +39,7 @@ this many characters of budget."""
 def _resolve_compressor(
     injection: ContextInjectionConfig,
     section_sink: SectionSink | None = None,
+    grammar_resolver: object | None = None,
 ) -> ContextCompressor:
     """Build a ``CompressionPipeline`` from the injection config's strategy.
 
@@ -55,8 +56,10 @@ def _resolve_compressor(
     ``section_sink`` is passed through to the pipeline for persistence of
     scored sections.  ``None`` disables section emission.
 
-    Falls back to ``compression.mode`` for backward compatibility:
-    ``mode="none"`` → empty pipeline (passthrough).
+    ``grammar_resolver`` is an optional :class:`~pawc_kit.llm.ast_utils.GrammarResolver`
+    controlling which tree-sitter grammars are approved for use.  When provided,
+    it is configured as the module-level resolver for grammar loading.
+
     """
     from pawc_kit.llm.layers import (
         AdaptiveCompressionLayer,
@@ -67,8 +70,10 @@ def _resolve_compressor(
         SectionScoringLayer,
     )
 
-    if injection.compression.mode == "none":
-        return CompressionPipeline([], strategy="lossless")
+    if grammar_resolver is not None:
+        from pawc_kit.llm.ast_utils import configure_resolver
+
+        configure_resolver(grammar_resolver)
 
     strategy = injection.strategy
     eager = injection.compression.data_format.eager and strategy != "lossless"

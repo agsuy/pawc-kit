@@ -84,16 +84,6 @@ class EfficiencyConfig(BaseModel):
     handoff_guidance: HandoffGuidanceConfig = Field(default_factory=HandoffGuidanceConfig)
 
 
-class ChunkPolicyConfig(BaseModel):
-    """Per-chunk-type compression policy for SemanticCompressor."""
-
-    action: Literal["keep", "truncate", "collapse", "strip"] = "keep"
-    max_sentences: int | None = None
-    max_items: int | None = None
-    max_lines: int | None = None
-    max_rows: int | None = None
-
-
 class DataFormatConfig(BaseModel):
     """Data format conversion settings (Layer 2).
 
@@ -107,11 +97,12 @@ class DataFormatConfig(BaseModel):
 
 
 class CompressionConfig(BaseModel):
-    """Controls which compressor is used and its per-type policies."""
+    """Compression pipeline settings.
 
-    mode: Literal["simple", "semantic", "none"] = "simple"
-    chunk_size: int = Field(default=2000, ge=100)
-    policies: dict[str, ChunkPolicyConfig] = Field(default_factory=dict)
+    The pipeline strategy is controlled by ``ContextInjectionConfig.strategy``.
+    This model holds layer-specific knobs.
+    """
+
     data_format: DataFormatConfig = Field(default_factory=DataFormatConfig)
 
 
@@ -285,7 +276,6 @@ class RoleConfig(BaseModel):
 
 
 __all__ = [
-    "ChunkPolicyConfig",
     "CompressionConfig",
     "ContextBudget",
     "ContextConfig",

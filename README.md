@@ -242,11 +242,11 @@ Context pack data (request files, discovery handoff, child packs) is injected in
 
 - **What to include** — `include_request_files`, `include_discovery`, `include_children`
 - **Filtering** — `file_allowlist`, `file_blocklist`, `max_file_chars`, `discovery_sections`
-- **Compression** — `compression.mode`: `"simple"` (default regex-based `MarkdownCompressor`), `"semantic"` (chunk → classify → policy → reassemble, requires `pawc-kit[semantic]`), or `"none"` (`PassthroughCompressor`)
+- **Compression** — `compression.strategy`: `"balanced"` (default), `"compact"`, `"full"`, `"lossless"` — resolved to a `CompressionPipeline` with composable layers
 
 With `mode: "semantic"`, per-chunk-type policies are configurable in YAML (`compression.policies`): `heading`, `paragraph`, `list`, `code`, `table`, `diagram`, each with `action` (`keep` / `truncate` / `collapse` / `strip`) and optional limits (`max_sentences`, `max_items`, `max_lines`, `max_rows`). The semantic pipeline uses [semantic-text-splitter](https://github.com/benbrandt/text-splitter) as the boundary oracle, then a heuristic classifier and your policies.
 
-Implementations: `MarkdownCompressor`, `PassthroughCompressor`, `SemanticCompressor`; all implement the `ContextCompressor` protocol. The prompt builder resolves the compressor from config when building request and discovery sections; an explicit `compressor` argument overrides.
+The prompt builder resolves a `CompressionPipeline` from config via `_resolve_compressor()` when building request and discovery sections; an explicit `compressor` argument overrides.
 
 ## Observability
 
@@ -385,7 +385,7 @@ adapters, then hands execution to the workflow engine and role implementations.
 3. `workflow` — engine, phase graph, role protocols
 4. `adapters` — filesystem and observability implementations
 5. `config` — YAML config loading and validation infrastructure
-6. `llm` — LLM backend integration (roles, structured output, prompts, context injection, compressors: `MarkdownCompressor`, `SemanticCompressor`, `PassthroughCompressor`)
+6. `llm` — LLM backend integration (roles, structured output, prompts, context injection, `CompressionPipeline` with composable layers)
 
 Top-level modules bridge config with the engine:
 

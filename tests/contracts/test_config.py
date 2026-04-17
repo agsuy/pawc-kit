@@ -6,7 +6,6 @@ import pytest
 from pydantic import ValidationError
 
 from pawc_kit.contracts.config import (
-    ChunkPolicyConfig,
     CompressionConfig,
     ContextConfig,
     ContextInjectionConfig,
@@ -208,85 +207,13 @@ def test_role_config_rejects_invalid_semver() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ChunkPolicyConfig
-# ---------------------------------------------------------------------------
-
-
-def test_chunk_policy_config_default_action_is_keep() -> None:
-    cfg = ChunkPolicyConfig()
-    assert cfg.action == "keep"
-
-
-def test_chunk_policy_config_all_numeric_fields_default_none() -> None:
-    cfg = ChunkPolicyConfig()
-    assert cfg.max_sentences is None
-    assert cfg.max_items is None
-    assert cfg.max_lines is None
-    assert cfg.max_rows is None
-
-
-def test_chunk_policy_config_rejects_unknown_action() -> None:
-    with pytest.raises(ValidationError):
-        ChunkPolicyConfig(action="unknown")  # type: ignore[arg-type]
-
-
-def test_chunk_policy_config_collapse_with_max_lines() -> None:
-    cfg = ChunkPolicyConfig(action="collapse", max_lines=4)
-    assert cfg.action == "collapse"
-    assert cfg.max_lines == 4
-
-
-# ---------------------------------------------------------------------------
 # CompressionConfig
 # ---------------------------------------------------------------------------
 
 
-def test_compression_config_default_mode_is_simple() -> None:
+def test_compression_config_defaults() -> None:
     cfg = CompressionConfig()
-    assert cfg.mode == "simple"
-
-
-def test_compression_config_default_chunk_size() -> None:
-    cfg = CompressionConfig()
-    assert cfg.chunk_size == 2000
-
-
-def test_compression_config_chunk_size_must_be_at_least_100() -> None:
-    with pytest.raises(ValidationError):
-        CompressionConfig(chunk_size=99)
-
-
-def test_compression_config_semantic_mode() -> None:
-    cfg = CompressionConfig(mode="semantic", chunk_size=3000)
-    assert cfg.mode == "semantic"
-    assert cfg.chunk_size == 3000
-
-
-def test_compression_config_none_mode() -> None:
-    cfg = CompressionConfig(mode="none")
-    assert cfg.mode == "none"
-
-
-def test_compression_config_invalid_mode_raises() -> None:
-    with pytest.raises(ValidationError):
-        CompressionConfig(mode="aggressive")  # type: ignore[arg-type]
-
-
-def test_compression_config_policies_dict_defaults_empty() -> None:
-    cfg = CompressionConfig()
-    assert cfg.policies == {}
-
-
-def test_compression_config_with_policy_overrides() -> None:
-    cfg = CompressionConfig(
-        mode="semantic",
-        policies={
-            "code": ChunkPolicyConfig(action="collapse", max_lines=10),
-            "diagram": ChunkPolicyConfig(action="strip"),
-        },
-    )
-    assert cfg.policies["code"].max_lines == 10
-    assert cfg.policies["diagram"].action == "strip"
+    assert cfg.data_format.eager is True
 
 
 # ---------------------------------------------------------------------------
@@ -294,29 +221,22 @@ def test_compression_config_with_policy_overrides() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_context_injection_compression_defaults_to_simple() -> None:
+def test_context_injection_compression_defaults() -> None:
     cfg = ContextInjectionConfig()
-    assert cfg.compression.mode == "simple"
+    assert cfg.compression.data_format.eager is True
 
 
-def test_context_injection_full_yaml_style_config() -> None:
+def test_context_injection_with_compression_config() -> None:
     data = {
         "include_request_files": True,
         "max_file_chars": 8000,
         "compression": {
-            "mode": "semantic",
-            "chunk_size": 2500,
-            "policies": {
-                "heading": {"action": "keep"},
-                "code": {"action": "collapse", "max_lines": 4},
-            },
+            "data_format": {"eager": False},
         },
     }
     cfg = ContextInjectionConfig.model_validate(data)
     assert cfg.max_file_chars == 8000
-    assert cfg.compression.mode == "semantic"
-    assert cfg.compression.chunk_size == 2500
-    assert cfg.compression.policies["code"].max_lines == 4
+    assert cfg.compression.data_format.eager is False
 
 
 # ---------------------------------------------------------------------------
@@ -504,14 +424,12 @@ def test_root_config_with_compression_config() -> None:
         "skill": {"name": "s", "version": "1.0.0"},
         "context_injection": {
             "compression": {
-                "mode": "semantic",
-                "policies": {"diagram": {"action": "strip"}},
+                "data_format": {"eager": False},
             }
         },
     }
     cfg = RootConfig.model_validate(data)
-    assert cfg.context_injection.compression.mode == "semantic"
-    assert cfg.context_injection.compression.policies["diagram"].action == "strip"
+    assert cfg.context_injection.compression.data_format.eager is False
 
 
 # ---------------------------------------------------------------------------

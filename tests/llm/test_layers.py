@@ -6,8 +6,8 @@ from pawc_kit.llm.layers.adaptive import (
     AdaptiveCompressionLayer,
     AdaptiveThresholds,
     CompressionLevel,
-    _guess_category,
 )
+from pawc_kit.llm.layers.detection import detect_category
 from pawc_kit.llm.layers.priority_selection import PrioritySelectionLayer
 from pawc_kit.ports.compressor import CompressionLayer
 
@@ -149,23 +149,28 @@ def test_priority_no_chunks_fit_truncates_best() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_guess_category_from_filename() -> None:
-    assert _guess_category("main.py", None) == "code"
-    assert _guess_category("data.json", None) == "data"
-    assert _guess_category("readme.md", None) == "prose"
-    assert _guess_category("config.yaml", None) == "data"
-    assert _guess_category("app.tsx", None) == "code"
+def test_detect_category_from_filename() -> None:
+    assert detect_category("x", filename="main.py") == "code"
+    assert detect_category("x", filename="data.json") == "data"
+    assert detect_category("x", filename="readme.md") == "prose"
+    assert detect_category("x", filename="config.yaml") == "data"
+    assert detect_category("x", filename="app.tsx") == "code"
 
 
-def test_guess_category_explicit_type_overrides() -> None:
-    assert _guess_category("weird.xyz", "code") == "code"
-    assert _guess_category("weird.xyz", "data") == "data"
-    assert _guess_category("weird.xyz", "prose") == "prose"
+def test_detect_category_magika_fallback_no_filename() -> None:
+    assert detect_category("import os\nprint(os.getcwd())") == "code"
+    assert detect_category("# Hello\n\nThis is a paragraph.\n\n## Section") == "prose"
 
 
-def test_guess_category_defaults_to_prose() -> None:
-    assert _guess_category(None, None) == "prose"
-    assert _guess_category("unknown.xyz", None) == "prose"
+def test_detect_category_explicit_type_overrides() -> None:
+    assert detect_category("anything", content_type="code") == "code"
+    assert detect_category("anything", content_type="data") == "data"
+    assert detect_category("anything", content_type="prose") == "prose"
+
+
+def test_detect_category_defaults_to_prose() -> None:
+    assert detect_category("") == "prose"
+    assert detect_category("some ambiguous content") == "prose"
 
 
 # ---------------------------------------------------------------------------

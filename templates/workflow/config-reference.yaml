@@ -94,22 +94,8 @@ state_directory: ./runs
 #     - key_artifacts
 #
 #   compression:                    # CompressionConfig, all fields have defaults
-#     mode: simple                  # "simple" | "semantic" | "none", default "simple"
-#     chunk_size: 2000              # int, default 2000, minimum 100
-#     policies:                     # dict[str, ChunkPolicyConfig], default {}
-                                    # Keys must match semantic ChunkType values:
-                                    #   heading, paragraph, list, code, table, diagram
-                                    #   (mode=semantic only; unknown keys logged and ignored)
-#       paragraph:                  # ChunkPolicyConfig
-#         action: truncate          # "keep" | "truncate" | "collapse" | "strip"
-                                    #   default "keep"
-#         max_sentences: 5          # int | null, default null
-#         max_items: null           # int | null, default null
-#         max_lines: null           # int | null, default null
-#         max_rows: null            # int | null, default null
-#       code:
-#         action: collapse
-#         max_lines: 20
+#     data_format:                  # DataFormatConfig
+#       eager: true                 # bool, default true — convert data files immediately
 
 
 # ---------------------------------------------------------------------------

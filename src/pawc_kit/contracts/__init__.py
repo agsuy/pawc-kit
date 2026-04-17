@@ -14,7 +14,6 @@ from pawc_kit.contracts.artifacts import (
     KeyArtifactRef,
 )
 from pawc_kit.contracts.config import (
-    ChunkPolicyConfig,
     CompressionConfig,
     ContextBudget,
     ContextConfig,
@@ -84,7 +83,6 @@ from pawc_kit.contracts.state import (
 __all__ = [
     "AgentUsedEntry",
     "ArtifactRef",
-    "ChunkPolicyConfig",
     "CompositionEntry",
     "CompressionConfig",
     "ContentPartType",

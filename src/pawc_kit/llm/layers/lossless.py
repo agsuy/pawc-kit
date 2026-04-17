@@ -1,6 +1,6 @@
 """LosslessLayer: zero-information-loss text cleanup.
 
-Extracted from ``MarkdownCompressor``.  Applies a pipeline of lossless
+Applies a pipeline of lossless
 optimizations that reduce token count without discarding semantic content:
 
 1. Strip HTML comments.
