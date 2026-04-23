@@ -214,6 +214,50 @@ def test_role_config_rejects_invalid_semver() -> None:
 def test_compression_config_defaults() -> None:
     cfg = CompressionConfig()
     assert cfg.data_format.eager is True
+    assert cfg.adaptive_thresholds is None
+    assert cfg.structural_weights is None
+
+
+def test_compression_config_adaptive_thresholds_roundtrip() -> None:
+    data = {"adaptive_thresholds": {"light": 1.5, "moderate": 2.5}}
+    cfg = CompressionConfig.model_validate(data)
+    assert cfg.adaptive_thresholds == {"light": 1.5, "moderate": 2.5}
+
+
+def test_compression_config_structural_weights_roundtrip() -> None:
+    data = {"structural_weights": {"heading": 120, "paragraph": 10}}
+    cfg = CompressionConfig.model_validate(data)
+    assert cfg.structural_weights == {"heading": 120, "paragraph": 10}
+
+
+def test_compression_config_full_roundtrip() -> None:
+    data = {
+        "data_format": {"eager": False},
+        "adaptive_thresholds": {"emergency": 10.0},
+        "structural_weights": {"code": 80},
+    }
+    cfg = CompressionConfig.model_validate(data)
+    assert cfg.data_format.eager is False
+    assert cfg.adaptive_thresholds == {"emergency": 10.0}
+    assert cfg.structural_weights == {"code": 80}
+
+
+def test_root_config_compression_thresholds_roundtrip() -> None:
+    data = {
+        "skill": {"name": "s", "version": "1.0.0"},
+        "context_injection": {
+            "compression": {
+                "adaptive_thresholds": {"light": 1.0, "aggressive": 3.0},
+                "structural_weights": {"heading": 150},
+            }
+        },
+    }
+    cfg = RootConfig.model_validate(data)
+    assert cfg.context_injection.compression.adaptive_thresholds == {
+        "light": 1.0,
+        "aggressive": 3.0,
+    }
+    assert cfg.context_injection.compression.structural_weights == {"heading": 150}
 
 
 # ---------------------------------------------------------------------------

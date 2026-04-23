@@ -101,9 +101,27 @@ class CompressionConfig(BaseModel):
 
     The pipeline strategy is controlled by ``ContextInjectionConfig.strategy``.
     This model holds layer-specific knobs.
+
+    ``adaptive_thresholds`` overrides the ratio thresholds that trigger each
+    compression level in ``AdaptiveCompressionLayer``.  Keys are ``"light"``,
+    ``"moderate"``, ``"aggressive"``, ``"emergency"``; values are floats
+    (original/budget ratio).  ``None`` uses strategy defaults from
+    ``STRATEGY_THRESHOLDS``.  Partial dicts are merged with the strategy base.
+
+    ``structural_weights`` overrides the per-chunk-type scoring weights used
+    by ``PrioritySelectionLayer``.  Keys are chunk type names (``"heading"``,
+    ``"code"``, ``"list"``, ``"table"``, ``"paragraph"``, ``"diagram"``);
+    values are integer scores.  ``None`` uses ``STRUCTURAL_WEIGHTS`` defaults.
+    Partial dicts are merged with the defaults.
     """
 
     data_format: DataFormatConfig = Field(default_factory=DataFormatConfig)
+    adaptive_thresholds: dict[str, float] | None = None
+    structural_weights: dict[str, int] | None = None
+    importance_high_threshold: int = 80
+    importance_low_threshold: int = 50
+    graph_weight: float = 0.6
+    task_weight: float = 0.4
 
 
 class ContextBudget(BaseModel):
