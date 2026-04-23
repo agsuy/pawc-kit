@@ -8,9 +8,11 @@ from pawc_kit.ports.artifacts import (
     AsyncArtifactStore,
     AsyncArtifactWriter,
 )
+from pawc_kit.ports.chunk_store import AsyncChunkStore, ChunkStore
 from pawc_kit.ports.clock import AsyncClock, Clock
 from pawc_kit.ports.compressor import CompressionLayer, CompressionResult, ContextCompressor
 from pawc_kit.ports.controller import RunController, RunSignal
+from pawc_kit.ports.embedding import AsyncEmbeddingBackend, EmbeddingBackend, EmbeddingCapabilities
 from pawc_kit.ports.invoker import AsyncRoleInvoker, RoleInvoker
 from pawc_kit.ports.observers import AsyncWorkflowObserver, WorkflowObserver
 from pawc_kit.ports.prompts import PromptAssembler
@@ -35,16 +37,21 @@ __all__ = [
     "AsyncArtifactReader",
     "AsyncArtifactStore",
     "AsyncArtifactWriter",
-    "CompressionLayer",
-    "CompressionResult",
+    "AsyncChunkStore",
     "AsyncClock",
+    "AsyncEmbeddingBackend",
     "AsyncResolvedBackend",
     "AsyncRoleInvoker",
     "AsyncRuntimeBackend",
     "AsyncStateStore",
     "AsyncWorkflowObserver",
+    "ChunkStore",
     "Clock",
+    "CompressionLayer",
+    "CompressionResult",
     "ContextCompressor",
+    "EmbeddingBackend",
+    "EmbeddingCapabilities",
     "PromptAssembler",
     "ResolvedBackend",
     "RoleInvoker",
