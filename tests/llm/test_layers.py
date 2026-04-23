@@ -425,6 +425,83 @@ def test_lossless_strategy_has_section_scoring_layer() -> None:
     assert not any(isinstance(layer, PrioritySelectionLayer) for layer in pipeline._layers)
 
 
+def test_resolve_compressor_custom_adaptive_thresholds() -> None:
+    """Custom adaptive_thresholds override strategy defaults, partial merge."""
+    from pawc_kit.contracts.config import ContextInjectionConfig
+    from pawc_kit.llm.layers import AdaptiveCompressionLayer
+    from pawc_kit.llm.layers.adaptive import STRATEGY_THRESHOLDS
+    from pawc_kit.llm.prompts import _resolve_compressor
+
+    cfg = ContextInjectionConfig(
+        strategy="balanced",
+        compression={"adaptive_thresholds": {"light": 1.5, "emergency": 12.0}},
+    )
+    pipeline = _resolve_compressor(cfg)
+    adaptive = [l for l in pipeline._layers if isinstance(l, AdaptiveCompressionLayer)][0]
+    # Overridden values
+    assert adaptive._thresholds.light == 1.5
+    assert adaptive._thresholds.emergency == 12.0
+    # Non-overridden values keep balanced defaults
+    base = STRATEGY_THRESHOLDS["balanced"]
+    assert adaptive._thresholds.moderate == base.moderate
+    assert adaptive._thresholds.aggressive == base.aggressive
+
+
+def test_resolve_compressor_no_thresholds_uses_strategy_default() -> None:
+    """Without adaptive_thresholds, strategy defaults are used."""
+    from pawc_kit.contracts.config import ContextInjectionConfig
+    from pawc_kit.llm.layers import AdaptiveCompressionLayer
+    from pawc_kit.llm.layers.adaptive import STRATEGY_THRESHOLDS
+    from pawc_kit.llm.prompts import _resolve_compressor
+
+    cfg = ContextInjectionConfig(strategy="compact")
+    pipeline = _resolve_compressor(cfg)
+    adaptive = [l for l in pipeline._layers if isinstance(l, AdaptiveCompressionLayer)][0]
+    expected = STRATEGY_THRESHOLDS["compact"]
+    assert adaptive._thresholds.light == expected.light
+    assert adaptive._thresholds.moderate == expected.moderate
+    assert adaptive._thresholds.aggressive == expected.aggressive
+    assert adaptive._thresholds.emergency == expected.emergency
+
+
+def test_resolve_compressor_custom_structural_weights() -> None:
+    """Custom structural_weights are passed to PrioritySelectionLayer."""
+    from pawc_kit.contracts.config import ContextInjectionConfig
+    from pawc_kit.llm.compressor import ChunkType
+    from pawc_kit.llm.layers import PrioritySelectionLayer
+    from pawc_kit.llm.layers.priority_selection import STRUCTURAL_WEIGHTS
+    from pawc_kit.llm.prompts import _resolve_compressor
+
+    cfg = ContextInjectionConfig(
+        strategy="balanced",
+        compression={"structural_weights": {"heading": 150, "paragraph": 10}},
+    )
+    pipeline = _resolve_compressor(cfg)
+    psl = [l for l in pipeline._layers if isinstance(l, PrioritySelectionLayer)][0]
+    # Overridden values
+    assert psl._weights[ChunkType.HEADING] == 150
+    assert psl._weights[ChunkType.PARAGRAPH] == 10
+    # Non-overridden values keep defaults
+    assert psl._weights[ChunkType.CODE] == STRUCTURAL_WEIGHTS[ChunkType.CODE]
+    assert psl._weights[ChunkType.LIST] == STRUCTURAL_WEIGHTS[ChunkType.LIST]
+
+
+def test_resolve_compressor_lossless_custom_weights() -> None:
+    """Lossless strategy passes custom weights to SectionScoringLayer."""
+    from pawc_kit.contracts.config import ContextInjectionConfig
+    from pawc_kit.llm.compressor import ChunkType
+    from pawc_kit.llm.layers import SectionScoringLayer
+    from pawc_kit.llm.prompts import _resolve_compressor
+
+    cfg = ContextInjectionConfig(
+        strategy="lossless",
+        compression={"structural_weights": {"code": 90}},
+    )
+    pipeline = _resolve_compressor(cfg)
+    ssl = [l for l in pipeline._layers if isinstance(l, SectionScoringLayer)][0]
+    assert ssl._weights[ChunkType.CODE] == 90
+
+
 def test_lossless_layer_name_param() -> None:
     """LosslessLayer with custom name reports that name when it fires."""
     from pawc_kit.llm.layers import LosslessLayer
@@ -987,3 +1064,332 @@ def test_lossless_no_split_when_fits() -> None:
 
     assert result.split_plan is None
     assert result.exceeded_budget is False
+
+
+# ---------------------------------------------------------------------------
+# Gap 4: CodeChunk.oversized flag + split plan handling
+# ---------------------------------------------------------------------------
+
+
+def test_split_code_oversized_flag_set() -> None:
+    """split_code with max_chunk_chars flags large chunks as oversized."""
+    from pawc_kit.llm.splitter import split_code
+
+    content = 'def small():\n    pass\n\ndef big():\n    x = "' + "a" * 500 + '"\n    return x\n'
+    chunks = split_code(content, filename="test.py", max_chunk_chars=100)
+    assert len(chunks) >= 2
+    oversized = [c for c in chunks if c.oversized]
+    normal = [c for c in chunks if not c.oversized]
+    assert len(oversized) >= 1, "Large function should be flagged oversized"
+    assert len(normal) >= 1, "Small function should not be flagged"
+
+
+def test_split_code_no_max_all_false() -> None:
+    """split_code without max_chunk_chars: all chunks oversized=False."""
+    from pawc_kit.llm.splitter import split_code
+
+    content = 'def big():\n    x = "' + "a" * 500 + '"\n    return x\n'
+    chunks = split_code(content, filename="test.py")
+    assert all(not c.oversized for c in chunks)
+
+
+def test_score_code_sections_propagates_oversized() -> None:
+    """score_code_sections propagates oversized from CodeChunk to ScoredSection."""
+    from pawc_kit.llm.layers.priority_selection import score_code_sections
+
+    content = 'def small():\n    pass\n\ndef big():\n    x = "' + "a" * 500 + '"\n    return x\n'
+    scored = score_code_sections(content, filename="test.py", max_chunk_chars=100)
+    assert any(s.oversized for s in scored), "Large section should be oversized"
+    assert any(not s.oversized for s in scored), "Small section should not be oversized"
+
+
+def test_split_plan_oversized_gets_own_batch() -> None:
+    """Oversized sections get their own batch with contains_oversized=True."""
+    from pawc_kit.llm.layers.pipeline import _build_split_plan
+    from pawc_kit.llm.layers.priority_selection import ScoredSection
+
+    sections = [
+        ScoredSection(
+            filename="f.py", section_idx=0, chunk_type="code",
+            score=80, content="a" * 50, char_count=50,
+            start_offset=0, end_offset=50,
+        ),
+        ScoredSection(
+            filename="f.py", section_idx=1, chunk_type="code",
+            score=60, content="b" * 300, char_count=300,
+            start_offset=50, end_offset=350, oversized=True,
+        ),
+        ScoredSection(
+            filename="f.py", section_idx=2, chunk_type="code",
+            score=40, content="c" * 50, char_count=50,
+            start_offset=350, end_offset=400,
+        ),
+    ]
+
+    plan = _build_split_plan(sections, budget=200, filename="f.py")
+
+    oversized_batches = [b for b in plan.batches if b.contains_oversized]
+    normal_batches = [b for b in plan.batches if not b.contains_oversized]
+
+    assert len(oversized_batches) == 1
+    assert len(oversized_batches[0].sections) == 1
+    assert oversized_batches[0].sections[0].section_idx == 1
+    assert len(normal_batches) >= 1
+    # All sections accounted for
+    total = sum(len(b.sections) for b in plan.batches)
+    assert total == 3
+
+
+# ---------------------------------------------------------------------------
+# Gap 1: Per-chunk importance-aware adaptive compression
+# ---------------------------------------------------------------------------
+
+
+def test_adaptive_per_chunk_high_score_capped_at_light() -> None:
+    """High-score function stays at LIGHT even when file-level is AGGRESSIVE."""
+    from pawc_kit.llm.layers.adaptive import AdaptiveCompressionLayer, CompressionLevel
+    from pawc_kit.llm.layers.priority_selection import ScoredSection
+
+    # Build scored_sections with a high-score function
+    high_func = 'def important_func():\n    """Critical function."""\n    x = 1\n    y = 2\n    return x + y\n'
+    low_func = 'def boring_func():\n    """Not important."""\n    a = 1\n    b = 2\n    c = 3\n    return a + b + c\n'
+
+    scored = [
+        ScoredSection(
+            filename="test.py", section_idx=0, chunk_type="code",
+            score=90, content=high_func, char_count=len(high_func),
+            start_offset=0, end_offset=len(high_func),
+        ),
+        ScoredSection(
+            filename="test.py", section_idx=1, chunk_type="code",
+            score=30, content=low_func, char_count=len(low_func),
+            start_offset=len(high_func) + 2, end_offset=len(high_func) + 2 + len(low_func),
+        ),
+    ]
+
+    content = high_func + "\n\n" + low_func
+    # Budget that triggers AGGRESSIVE file-level
+    layer = AdaptiveCompressionLayer(strategy="balanced", importance_high=80, importance_low=50)
+    budget = len(content) // 5  # ratio ~5 → AGGRESSIVE
+
+    result, name = layer.apply(
+        content, filename="test.py", budget=budget, scored_sections=scored,
+    )
+
+    assert name is not None
+    # High-score function's signature should be preserved (LIGHT keeps it intact)
+    assert "def important_func" in result
+    assert "important_func" in result
+
+
+def test_adaptive_per_chunk_low_score_more_aggressive() -> None:
+    """Low-score function gets compressed one level beyond file-level."""
+    from pawc_kit.llm.layers.adaptive import AdaptiveCompressionLayer
+    from pawc_kit.llm.layers.priority_selection import ScoredSection
+
+    high_func = 'def important_func():\n    """Critical."""\n    return 1\n'
+    low_func = 'def boring_func():\n    """Boring stuff."""\n    # comment 1\n    # comment 2\n    x = 1\n    return x\n'
+
+    scored = [
+        ScoredSection(
+            filename="test.py", section_idx=0, chunk_type="code",
+            score=90, content=high_func, char_count=len(high_func),
+            start_offset=0, end_offset=len(high_func),
+        ),
+        ScoredSection(
+            filename="test.py", section_idx=1, chunk_type="code",
+            score=30, content=low_func, char_count=len(low_func),
+            start_offset=len(high_func) + 2, end_offset=len(high_func) + 2 + len(low_func),
+        ),
+    ]
+
+    content = high_func + "\n\n" + low_func
+    # Budget that triggers MODERATE file-level (ratio ~2)
+    layer = AdaptiveCompressionLayer(strategy="balanced", importance_high=80, importance_low=50)
+    budget = len(content) // 2
+
+    result, name = layer.apply(
+        content, filename="test.py", budget=budget, scored_sections=scored,
+    )
+
+    assert name is not None
+    # Low-score function should be more aggressively compressed
+    # (MODERATE + 1 = AGGRESSIVE → outlined, losing comments and body)
+    # High-score function should be preserved at LIGHT
+    assert "def important_func" in result
+
+
+def test_adaptive_no_scored_sections_uniform() -> None:
+    """Without scored_sections, adaptive uses uniform file-level."""
+    from pawc_kit.llm.layers.adaptive import AdaptiveCompressionLayer
+
+    content = 'def func_a():\n    """Doc."""\n    return 1\n\ndef func_b():\n    return 2\n'
+    layer = AdaptiveCompressionLayer(strategy="balanced")
+    budget = len(content) // 3
+
+    result, name = layer.apply(content, filename="test.py", budget=budget)
+    assert name is not None
+    assert "adaptive_code_" in name
+
+
+def test_adaptive_non_code_ignores_scored_sections() -> None:
+    """Prose content uses uniform compression regardless of scored_sections."""
+    from pawc_kit.llm.layers.adaptive import AdaptiveCompressionLayer
+    from pawc_kit.llm.layers.priority_selection import ScoredSection
+
+    prose = "# Title\n\n" + "Some text. " * 100
+    scored = [
+        ScoredSection(
+            filename="doc.md", section_idx=0, chunk_type="heading",
+            score=100, content="# Title", char_count=7,
+            start_offset=0, end_offset=7,
+        ),
+    ]
+
+    layer = AdaptiveCompressionLayer(strategy="balanced")
+    budget = len(prose) // 3
+
+    result, name = layer.apply(
+        prose, filename="doc.md", budget=budget, scored_sections=scored,
+    )
+
+    assert name is not None
+    assert "adaptive_prose_" in name
+
+
+def test_adaptive_importance_thresholds_from_config() -> None:
+    """Custom importance thresholds from config are respected."""
+    from pawc_kit.llm.layers.adaptive import AdaptiveCompressionLayer, CompressionLevel
+
+    layer = AdaptiveCompressionLayer(importance_high=90, importance_low=70)
+    # Score 85: below custom high (90) → file level (not capped at LIGHT)
+    level = layer._adjust_level_for_score(CompressionLevel.AGGRESSIVE, 85)
+    assert level is CompressionLevel.AGGRESSIVE
+
+    # Score 95: above custom high (90) → capped at LIGHT
+    level = layer._adjust_level_for_score(CompressionLevel.AGGRESSIVE, 95)
+    assert level is CompressionLevel.LIGHT
+
+    # Score 60: below custom low (70) → one level more aggressive
+    level = layer._adjust_level_for_score(CompressionLevel.MODERATE, 60)
+    assert level is CompressionLevel.AGGRESSIVE
+
+
+def test_adaptive_adjust_level_emergency_stays() -> None:
+    """Emergency file-level + low score can't go beyond EMERGENCY."""
+    from pawc_kit.llm.layers.adaptive import AdaptiveCompressionLayer, CompressionLevel
+
+    layer = AdaptiveCompressionLayer()
+    level = layer._adjust_level_for_score(CompressionLevel.EMERGENCY, 30)
+    assert level is CompressionLevel.EMERGENCY
+
+
+def test_adaptive_adjust_level_light_high_score() -> None:
+    """LIGHT file-level + high score stays at LIGHT (already minimal)."""
+    from pawc_kit.llm.layers.adaptive import AdaptiveCompressionLayer, CompressionLevel
+
+    layer = AdaptiveCompressionLayer()
+    level = layer._adjust_level_for_score(CompressionLevel.LIGHT, 90)
+    assert level is CompressionLevel.LIGHT
+
+
+# ---------------------------------------------------------------------------
+# Phase C: render_batch() helper
+# ---------------------------------------------------------------------------
+
+
+def test_render_batch_single_batch_no_header() -> None:
+    """Single batch (batch_count=1) renders content without metadata header."""
+    from pawc_kit.llm.layers.priority_selection import ScoredSection
+    from pawc_kit.llm.prompts import render_batch
+    from pawc_kit.ports.compressor import SectionBatch
+
+    batch = SectionBatch(
+        batch_idx=0,
+        sections=[
+            ScoredSection(
+                filename="f.py", section_idx=0, chunk_type="code",
+                score=80, content="def func_a():\n    return 1",
+                char_count=25, start_offset=0, end_offset=25,
+            ),
+        ],
+        total_chars=25,
+    )
+
+    result = render_batch(batch, filename="f.py", batch_count=1)
+    assert "def func_a" in result
+    assert "batch" not in result.lower()  # no batch metadata
+
+
+def test_render_batch_multi_batch_has_header() -> None:
+    """Multi-batch renders batch position metadata."""
+    from pawc_kit.llm.layers.priority_selection import ScoredSection
+    from pawc_kit.llm.prompts import render_batch
+    from pawc_kit.ports.compressor import SectionBatch
+
+    batch = SectionBatch(
+        batch_idx=0,
+        sections=[
+            ScoredSection(
+                filename="f.py", section_idx=0, chunk_type="code",
+                score=80, content="def func_a():\n    return 1",
+                char_count=25, start_offset=0, end_offset=25,
+            ),
+        ],
+        total_chars=25,
+    )
+
+    result = render_batch(batch, filename="f.py", batch_count=3)
+    assert "batch 1/3" in result
+    assert "highest-priority" in result
+    assert "def func_a" in result
+
+
+def test_render_batch_second_batch_label() -> None:
+    """Non-first batches are labelled as lower-priority."""
+    from pawc_kit.llm.layers.priority_selection import ScoredSection
+    from pawc_kit.llm.prompts import render_batch
+    from pawc_kit.ports.compressor import SectionBatch
+
+    batch = SectionBatch(
+        batch_idx=1,
+        sections=[
+            ScoredSection(
+                filename="f.py", section_idx=2, chunk_type="code",
+                score=30, content="def func_c():\n    return 3",
+                char_count=25, start_offset=100, end_offset=125,
+            ),
+        ],
+        total_chars=25,
+    )
+
+    result = render_batch(batch, filename="f.py", batch_count=3)
+    assert "batch 2/3" in result
+    assert "lower-priority" in result
+
+
+def test_render_batch_document_order() -> None:
+    """Sections within a batch are rendered in document order."""
+    from pawc_kit.llm.layers.priority_selection import ScoredSection
+    from pawc_kit.llm.prompts import render_batch
+    from pawc_kit.ports.compressor import SectionBatch
+
+    batch = SectionBatch(
+        batch_idx=0,
+        sections=[
+            ScoredSection(
+                filename="f.py", section_idx=0, chunk_type="code",
+                score=80, content="FIRST_SECTION",
+                char_count=13, start_offset=0, end_offset=13,
+            ),
+            ScoredSection(
+                filename="f.py", section_idx=2, chunk_type="code",
+                score=60, content="SECOND_SECTION",
+                char_count=14, start_offset=50, end_offset=64,
+            ),
+        ],
+        total_chars=27,
+    )
+
+    result = render_batch(batch, filename="f.py", batch_count=1)
+    assert result.index("FIRST_SECTION") < result.index("SECOND_SECTION")
