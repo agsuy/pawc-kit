@@ -16,6 +16,7 @@ class SectionBatch:
     batch_idx: int
     sections: list[ScoredSection]
     total_chars: int
+    contains_oversized: bool = False
 
 
 @dataclass
@@ -64,6 +65,7 @@ class ContextCompressor(Protocol):
         budget: int | None = None,
         filename: str | None = None,
         content_type: str | None = None,
+        task_scores: list[float] | None = None,
     ) -> CompressionResult: ...
 
 
@@ -86,6 +88,8 @@ class CompressionLayer(Protocol):
         filename: str | None = None,
         budget: int | None = None,
         content_type: str | None = None,
+        scored_sections: list[ScoredSection] | None = None,
+        task_scores: list[float] | None = None,
     ) -> tuple[str, str | None]: ...
 
 
