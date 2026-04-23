@@ -44,10 +44,18 @@ toon = [
 compression = [
     "magika>=0.5",
 ]
+memory = [
+    "chromadb>=1.0",
+]
 ast = [
     "tree-sitter>=0.25",
     "tree-sitter-python>=0.25",
     "tree-sitter-javascript>=0.25",
+    "tree-sitter-typescript>=0.23",
+    "tree-sitter-go>=0.23",
+    "tree-sitter-rust>=0.23",
+    "tree-sitter-java>=0.23",
+    "tree-sitter-markdown>=0.3",
 ]
 
 [tool.setuptools.packages.find]
@@ -66,6 +74,7 @@ markers = [
     "slow: tests that may take longer",
     "llm_local: tests using a local LLM backend (Ollama, llama.cpp, vLLM, etc.)",
     "llm_paid: tests that call a paid LLM API requiring an API key (excluded by default)",
+    "memory: tests requiring chromadb",
 ]
 
 [tool.coverage.run]
@@ -77,7 +86,7 @@ show_missing = true
 
 [dependency-groups]
 dev = [
-    "pawc-kit[otel,semantic,toon,compression,ast]",
+    "pawc-kit[otel,semantic,toon,compression,ast,memory]",
     "pyright>=1.1.408",
     "pytest>=9.0.2",
     "pytest-cov>=6.0",
