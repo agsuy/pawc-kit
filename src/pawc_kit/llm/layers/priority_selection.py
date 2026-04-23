@@ -4,6 +4,10 @@ Replaces blind ``text[:budget]`` truncation with intelligent selection that
 preserves the most important chunks (headings, leading context, code) while
 dropping lower-priority content (trailing paragraphs, diagrams).
 
+Code chunks are scored using a cross-file reference graph when available.
+Prose chunks use structural weights (heading > list > paragraph > diagram).
+See ``ast-scoring-strategy.md`` for the research and phased strategy.
+
 Implements the ``CompressionLayer`` protocol.
 
 After ``apply()`` runs, ``last_sections`` holds the full list of scored
@@ -18,6 +22,7 @@ from dataclasses import dataclass
 
 from pawc_kit.llm.compressor import ChunkType, classify_chunk
 from pawc_kit.llm.layers.detection import detect_category
+from pawc_kit.llm.reference_graph import ReferenceScores
 from pawc_kit.llm.splitter import CodeChunk, split_code, split_markdown
 
 
@@ -38,13 +43,21 @@ class ScoredSection:
     start_offset: int
     end_offset: int
     selected: bool = False
+    oversized: bool = False
 
 
 # ---------------------------------------------------------------------------
-# Default scoring weights
+# Structural scoring weights — used for prose and unnamed code chunks
 # ---------------------------------------------------------------------------
 
-DEFAULT_WEIGHTS: dict[ChunkType, int] = {
+# Weights reflect document structure hierarchy:
+# Heading (100): navigation structure — losing a heading loses orientation.
+# Code (60): inline examples — more valuable than prose, less than structure.
+# List (50): condensed information — higher density than paragraphs.
+# Table (40): structured data — valuable but large relative to signal.
+# Paragraph (30): narrative detail — lowest density, most expendable.
+# Diagram (20): visual content — meaningless as text in LLM context.
+STRUCTURAL_WEIGHTS: dict[ChunkType, int] = {
     ChunkType.HEADING: 100,
     ChunkType.CODE: 60,
     ChunkType.LIST: 50,
@@ -53,11 +66,25 @@ DEFAULT_WEIGHTS: dict[ChunkType, int] = {
     ChunkType.DIAGRAM: 20,
 }
 
+# Backwards compatibility alias
+DEFAULT_WEIGHTS = STRUCTURAL_WEIGHTS
+
 _FIRST_N_BONUS = 80
-"""Score floor for the first N chunks — ensures leading context survives."""
+"""Score floor for the first N non-function chunks (imports, module docstring)."""
 
 _HEADING_OR_FENCE = re.compile(r"\n(?=#{1,6}\s|```)")
 """Regex split points: markdown headings and fenced code blocks."""
+
+# Function/method definition node types — first-N bonus does NOT apply to these.
+# Functions are scored by the reference graph, not by position.
+_FUNCTION_NODE_TYPES: frozenset[str] = frozenset({
+    "function_definition",
+    "decorated_definition",
+    "method_declaration",
+    "function_declaration",
+    "function_item",
+    "method",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -71,8 +98,16 @@ def score_sections(
     filename: str | None = None,
     weights: dict[ChunkType, int] | None = None,
     first_n: int = 3,
+    task_scores: list[float] | None = None,
+    graph_weight: float = 0.6,
+    task_weight: float = 0.4,
 ) -> list[ScoredSection]:
     """Score content sections by type without selecting or dropping any.
+
+    When *task_scores* is provided (one float per chunk, 0.0–1.0), the
+    final score blends structural/graph score with task relevance::
+
+        combined = graph_weight * structural_score + task_weight * (task_score * 100)
 
     Returns all sections with scores and offsets.  Does NOT set
     ``selected`` — that is the caller's decision.
@@ -86,6 +121,10 @@ def score_sections(
         score = resolved_weights.get(chunk_type, 30)
         if idx < first_n:
             score = max(score, _FIRST_N_BONUS)
+
+        if task_scores is not None and idx < len(task_scores):
+            score = int(graph_weight * score + task_weight * (task_scores[idx] * 100))
+
         start = offset
         end = offset + len(chunk)
         scored.append(
@@ -105,13 +144,12 @@ def score_sections(
 
 
 # ---------------------------------------------------------------------------
-# Code section scoring (flat — see ast-scoring-strategy.md for rationale)
+# Code section scoring — graph-derived for named symbols, structural for rest
 # ---------------------------------------------------------------------------
 
-# All function/class definitions → CODE. Everything else → PARAGRAPH.
-# Intentionally coarse: meaningful code scoring requires cross-file signals
-# (reference graphs, task relevance) that this layer doesn't have. Flat scoring
-# with correct AST boundaries is the win here. See ast-scoring-strategy.md.
+# Maps AST node types to ChunkType for structural weight lookup.
+# Used for unnamed chunks (imports, comments, module-level code).
+# Named symbol chunks (functions, classes) use graph-derived scores instead.
 _AST_CHUNK_TYPE: dict[str, ChunkType] = {
     "function_definition": ChunkType.CODE,
     "class_definition": ChunkType.CODE,
@@ -149,18 +187,29 @@ def score_code_sections(
     filename: str | None = None,
     weights: dict[ChunkType, int] | None = None,
     first_n: int = 3,
+    reference_scores: ReferenceScores | None = None,
+    max_chunk_chars: int | None = None,
+    task_scores: list[float] | None = None,
+    graph_weight: float = 0.6,
+    task_weight: float = 0.4,
 ) -> list[ScoredSection]:
-    """Score code sections using AST-aware splitting with flat scoring.
+    """Score code sections using AST-aware splitting and reference graph.
 
-    Tree-sitter provides accurate function/class boundaries via
-    :func:`split_code`.  Scoring is intentionally flat — all code chunks
-    get ``ChunkType.CODE``, imports and comments get
-    ``ChunkType.PARAGRAPH``.  The first *first_n* chunks get a bonus.
+    Named symbol chunks (functions, classes) are scored using the
+    cross-file reference graph.  Unnamed chunks (imports, comments,
+    module-level code) use structural weights.
 
-    Meaningful code scoring requires cross-file signals (reference graphs,
-    task relevance) that this layer doesn't have.  Flat scoring with good
-    boundaries is better than bad boundaries with the same flat scoring
-    (which is what ``split_markdown`` on code produces).
+    The first *first_n* non-function chunks get a position bonus to
+    preserve leading context (imports, module docstring).  Functions are
+    scored by the graph, not by position.
+
+    When *task_scores* is provided (one float per chunk, 0.0–1.0), the
+    final score blends graph/structural score with task relevance::
+
+        combined = graph_weight * graph_score + task_weight * (task_score * 100)
+
+    When *max_chunk_chars* is provided, chunks exceeding the limit have
+    ``oversized=True`` on the resulting ``ScoredSection``.
 
     Falls back to :func:`score_sections` when *filename* is ``None``
     (can't determine grammar without an extension).
@@ -168,17 +217,36 @@ def score_code_sections(
     See ``ast-scoring-strategy.md`` for the research and phased strategy.
     """
     if filename is None:
-        return score_sections(content, filename=filename, weights=weights, first_n=first_n)
+        return score_sections(
+            content, filename=filename, weights=weights, first_n=first_n,
+            task_scores=task_scores, graph_weight=graph_weight, task_weight=task_weight,
+        )
 
-    chunks = split_code(content, filename=filename)
+    chunks = split_code(content, filename=filename, max_chunk_chars=max_chunk_chars)
+    ref_scores = reference_scores or ReferenceScores()
 
     scored: list[ScoredSection] = []
-    resolved_weights = weights or dict(DEFAULT_WEIGHTS)
+    resolved_weights = weights or dict(STRUCTURAL_WEIGHTS)
+    non_func_idx = 0  # Track position among non-function chunks for first-N bonus
     for idx, chunk in enumerate(chunks):
         chunk_type = _ast_node_to_chunk_type(chunk.node_type)
-        score = resolved_weights.get(chunk_type, 30)
-        if idx < first_n:
-            score = max(score, _FIRST_N_BONUS)
+        is_function = chunk.node_type in _FUNCTION_NODE_TYPES
+
+        if is_function and chunk.name:
+            # Named symbol: use graph-derived score
+            score = int(ref_scores.get(filename, [chunk.name]))
+        else:
+            # Unnamed chunk (imports, comments, module-level): structural weight
+            score = resolved_weights.get(chunk_type, 30)
+            # First-N bonus only for non-function chunks
+            if non_func_idx < first_n:
+                score = max(score, _FIRST_N_BONUS)
+            non_func_idx += 1
+
+        # Blend with task-relevance score when available
+        if task_scores is not None and idx < len(task_scores):
+            score = int(graph_weight * score + task_weight * (task_scores[idx] * 100))
+
         scored.append(
             ScoredSection(
                 filename=filename,
@@ -189,6 +257,7 @@ def score_code_sections(
                 char_count=len(chunk.content),
                 start_offset=chunk.start_byte,
                 end_offset=chunk.end_byte,
+                oversized=chunk.oversized,
             )
         )
     return scored
@@ -220,9 +289,11 @@ class PrioritySelectionLayer:
         self,
         weights: dict[ChunkType, int] | None = None,
         first_n: int = 3,
+        reference_scores: ReferenceScores | None = None,
     ) -> None:
-        self._weights = weights or dict(DEFAULT_WEIGHTS)
+        self._weights = weights or dict(STRUCTURAL_WEIGHTS)
         self._first_n = first_n
+        self._ref_scores = reference_scores or ReferenceScores()
         self.last_sections: list[ScoredSection] = []
 
     def apply(
@@ -233,6 +304,8 @@ class PrioritySelectionLayer:
         budget: int | None = None,
         content_type: str | None = None,
         truncation_hint: str | None = None,
+        scored_sections: object | None = None,
+        task_scores: list[float] | None = None,
     ) -> tuple[str, str | None]:
         self.last_sections = []
 
@@ -252,6 +325,8 @@ class PrioritySelectionLayer:
                 filename=filename,
                 weights=self._weights,
                 first_n=self._first_n,
+                reference_scores=self._ref_scores,
+                task_scores=task_scores,
             )
         else:
             scored = score_sections(
@@ -259,6 +334,7 @@ class PrioritySelectionLayer:
                 filename=filename,
                 weights=self._weights,
                 first_n=self._first_n,
+                task_scores=task_scores,
             )
         if len(scored) <= 1:
             # Single chunk — nothing to select; truncate directly
@@ -314,9 +390,11 @@ class SectionScoringLayer:
         self,
         weights: dict[ChunkType, int] | None = None,
         first_n: int = 3,
+        reference_scores: ReferenceScores | None = None,
     ) -> None:
         self._weights = weights
         self._first_n = first_n
+        self._ref_scores = reference_scores or ReferenceScores()
         self.last_sections: list[ScoredSection] = []
 
     def apply(
@@ -327,6 +405,8 @@ class SectionScoringLayer:
         budget: int | None = None,
         content_type: str | None = None,
         truncation_hint: str | None = None,
+        scored_sections: object | None = None,
+        task_scores: list[float] | None = None,
     ) -> tuple[str, str | None]:
         self.last_sections = []
 
@@ -347,6 +427,8 @@ class SectionScoringLayer:
                 filename=filename,
                 weights=self._weights,
                 first_n=self._first_n,
+                reference_scores=self._ref_scores,
+                task_scores=task_scores,
             )
         else:
             scored = score_sections(
@@ -354,6 +436,7 @@ class SectionScoringLayer:
                 filename=filename,
                 weights=self._weights,
                 first_n=self._first_n,
+                task_scores=task_scores,
             )
         if len(scored) <= 1:
             return content, None  # single chunk — nothing to split

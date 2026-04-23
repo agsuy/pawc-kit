@@ -118,6 +118,8 @@ _EXT_TO_LANG: dict[str, str] = {
     ".php": "php",
     ".lua": "lua",
     ".scala": "scala",
+    ".md": "markdown",
+    ".markdown": "markdown",
 }
 
 # ---------------------------------------------------------------------------
@@ -154,6 +156,24 @@ def _auto_install(lang_name: str) -> None:
 # ---------------------------------------------------------------------------
 
 _GRAMMARS: dict[str, object | None] = {}
+
+
+def _resolve_language_fn(mod: object, lang_name: str) -> object:
+    """Resolve the language factory from a grammar module.
+
+    Most grammar packages expose ``language()``; some (e.g.
+    ``tree_sitter_typescript``) use ``language_{name}()`` instead.
+    """
+    fn = getattr(mod, "language", None)
+    if fn is not None:
+        return fn()
+    # Fallback: language_typescript(), language_tsx(), etc.
+    fn = getattr(mod, f"language_{lang_name}", None)
+    if fn is not None:
+        return fn()
+    raise AttributeError(
+        f"Module {mod!r} has neither language() nor language_{lang_name}()"
+    )
 
 
 class GrammarNotApprovedError(Exception):
@@ -195,7 +215,7 @@ def _load_grammar(lang_name: str) -> object | None:
         from tree_sitter import Language
 
         mod = importlib.import_module(f"tree_sitter_{lang_name}")
-        _GRAMMARS[lang_name] = Language(mod.language())
+        _GRAMMARS[lang_name] = Language(_resolve_language_fn(mod, lang_name))
         return _GRAMMARS[lang_name]
     except (ImportError, AttributeError):
         pass
@@ -208,7 +228,7 @@ def _load_grammar(lang_name: str) -> object | None:
             from tree_sitter import Language
 
             mod = importlib.import_module(f"tree_sitter_{lang_name}")
-            _GRAMMARS[lang_name] = Language(mod.language())
+            _GRAMMARS[lang_name] = Language(_resolve_language_fn(mod, lang_name))
             return _GRAMMARS[lang_name]
         except (ImportError, AttributeError) as exc:
             raise GrammarInstallError(

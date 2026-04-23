@@ -16,7 +16,7 @@ from pawc_kit.contracts.config import (
 )
 from pawc_kit.contracts.errors import ConfigurationError
 from pawc_kit.llm.layers.pipeline import SectionSink
-from pawc_kit.ports.compressor import SplitPlan
+from pawc_kit.ports.compressor import SectionBatch, SplitPlan
 
 if TYPE_CHECKING:
     from pawc_kit.contracts.artifacts import HandoffPart
@@ -40,6 +40,7 @@ def _resolve_compressor(
     injection: ContextInjectionConfig,
     section_sink: SectionSink | None = None,
     grammar_resolver: object | None = None,
+    reference_scores: object | None = None,
 ) -> ContextCompressor:
     """Build a ``CompressionPipeline`` from the injection config's strategy.
 
@@ -60,7 +61,10 @@ def _resolve_compressor(
     controlling which tree-sitter grammars are approved for use.  When provided,
     it is configured as the module-level resolver for grammar loading.
 
+    ``reference_scores`` is a :class:`~pawc_kit.llm.reference_graph.ReferenceScores`
+    providing cross-file symbol importance scores for code chunk scoring.
     """
+    from pawc_kit.llm.compressor import ChunkType
     from pawc_kit.llm.layers import (
         AdaptiveCompressionLayer,
         CompressionPipeline,
@@ -69,6 +73,7 @@ def _resolve_compressor(
         PrioritySelectionLayer,
         SectionScoringLayer,
     )
+    from pawc_kit.llm.layers.adaptive import AdaptiveThresholds, STRATEGY_THRESHOLDS
 
     if grammar_resolver is not None:
         from pawc_kit.llm.ast_utils import configure_resolver
@@ -78,15 +83,55 @@ def _resolve_compressor(
     strategy = injection.strategy
     eager = injection.compression.data_format.eager and strategy != "lossless"
 
+    # --- Gap 5: resolve adaptive thresholds from config ---
+    adaptive_thresholds: AdaptiveThresholds | None = None
+    if injection.compression.adaptive_thresholds:
+        base = STRATEGY_THRESHOLDS.get(strategy, STRATEGY_THRESHOLDS["balanced"])
+        overrides = injection.compression.adaptive_thresholds
+        adaptive_thresholds = AdaptiveThresholds(
+            light=overrides.get("light", base.light),
+            moderate=overrides.get("moderate", base.moderate),
+            aggressive=overrides.get("aggressive", base.aggressive),
+            emergency=overrides.get("emergency", base.emergency),
+        )
+
+    # --- Gap 6: resolve structural weights from config ---
+    from pawc_kit.llm.layers.priority_selection import STRUCTURAL_WEIGHTS
+
+    structural_weights: dict[ChunkType, int] | None = None
+    if injection.compression.structural_weights:
+        resolved = dict(STRUCTURAL_WEIGHTS)
+        for name, value in injection.compression.structural_weights.items():
+            try:
+                ct = ChunkType(name)
+            except ValueError:
+                continue  # skip unknown chunk type names
+            resolved[ct] = value
+        structural_weights = resolved
+
     if strategy == "lossless":
-        layers = [LosslessLayer(), SectionScoringLayer()]
+        layers = [
+            LosslessLayer(),
+            SectionScoringLayer(
+                weights=structural_weights,
+                reference_scores=reference_scores,
+            ),
+        ]
     else:
         layers = [
             LosslessLayer(),
             DataFormatLayer(eager=eager),
-            PrioritySelectionLayer(),
+            PrioritySelectionLayer(
+                weights=structural_weights,
+                reference_scores=reference_scores,
+            ),
             LosslessLayer(name="lossless_cleanup"),
-            AdaptiveCompressionLayer(strategy=strategy),
+            AdaptiveCompressionLayer(
+                strategy=strategy,
+                thresholds=adaptive_thresholds,
+                importance_high=injection.compression.importance_high_threshold,
+                importance_low=injection.compression.importance_low_threshold,
+            ),
         ]
 
     return CompressionPipeline(
@@ -452,7 +497,6 @@ def request_section(
     if not pack.request_files and not pack.children:
         return "", []
 
-    comp = compressor or _resolve_compressor(cfg)
     split_plans: list[SplitPlan] = []
 
     def _should_include(filename: str) -> bool:
@@ -477,6 +521,12 @@ def request_section(
 
     if not eligible:
         return "", []
+
+    # Build cross-file reference graph for code scoring
+    from pawc_kit.llm.reference_graph import build_reference_scores
+
+    ref_scores = build_reference_scores(dict(eligible))
+    comp = compressor or _resolve_compressor(cfg, reference_scores=ref_scores)
 
     budgets = _compute_per_file_budgets(eligible, cfg)
 
@@ -546,6 +596,42 @@ def request_section(
     if len(parts) == 1:
         return "", []
     return "\n".join(parts), split_plans
+
+
+def render_batch(
+    batch: SectionBatch,
+    *,
+    filename: str,
+    batch_count: int,
+    truncation_hint: str | None = None,
+) -> str:
+    """Render a ``SectionBatch`` as a user prompt section.
+
+    Produces the same format as ``request_section()`` but containing only
+    this batch's sections, with metadata about batch position.
+
+    The server calls this once per batch in quality-mode overflow,
+    building one LLM prompt per call.  Each call covers a disjoint
+    slice of the original file's content.
+
+    When *batch_count* is 1, no batch metadata header is added — the
+    output is identical to a normal request section.
+    """
+    parts: list[str] = []
+
+    if batch_count > 1:
+        label = f"batch {batch.batch_idx + 1}/{batch_count}"
+        if batch.batch_idx == 0:
+            label += " — highest-priority sections"
+        else:
+            label += " — lower-priority sections"
+        parts.append(f"<!-- file: {filename} ({label}) -->")
+
+    # Sections are already in document order within the batch
+    for section in batch.sections:
+        parts.append(section.content)
+
+    return "\n\n".join(parts)
 
 
 def _render_handoff_parts(
@@ -683,7 +769,11 @@ def discovery_files_section(
     files = ctx.context.discovery_files
     if not files:
         return ""
-    comp = compressor or _resolve_compressor(cfg)
+
+    from pawc_kit.llm.reference_graph import build_reference_scores
+
+    ref_scores = build_reference_scores(dict(files))
+    comp = compressor or _resolve_compressor(cfg, reference_scores=ref_scores)
     parts: list[str] = ["## Discovery Files"]
     for name, content in files.items():
         result = comp.compress(content, filename=name)
@@ -875,6 +965,7 @@ __all__ = [
     "abbreviated_schema",
     "context_section",
     "discovery_section",
+    "render_batch",
     "request_section",
     "role_section",
     "schema_instructions",

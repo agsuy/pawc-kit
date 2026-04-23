@@ -96,6 +96,7 @@ class CompressionPipeline:
         budget: int | None = None,
         filename: str | None = None,
         content_type: str | None = None,
+        task_scores: list[float] | None = None,
     ) -> CompressionResult:
         original_chars = len(content)
         text = content
@@ -114,6 +115,7 @@ class CompressionPipeline:
                     budget=budget,
                     content_type=content_type,
                     truncation_hint=self._truncation_hint,
+                    task_scores=task_scores,
                 )
             else:
                 text, layer_name = layer.apply(
@@ -121,6 +123,8 @@ class CompressionPipeline:
                     filename=filename,
                     budget=budget,
                     content_type=content_type,
+                    scored_sections=last_scored or None,
+                    task_scores=task_scores,
                 )
 
             if layer_name:
@@ -180,6 +184,11 @@ def _build_split_plan(
     "dropped").  Sections are sorted by score descending for batch
     assignment (highest-priority sections land in batch 1).  Within each
     batch, sections are stored in document order.
+
+    Oversized sections (those exceeding the budget on their own) are
+    placed into dedicated single-section batches with
+    ``contains_oversized=True``.  The server decides how to handle them
+    (e.g. full fidelity, further splitting).
     """
     # Sort by score descending for batch assignment
     by_score = sorted(sections, key=lambda s: (-s.score, s.section_idx))
@@ -189,6 +198,30 @@ def _build_split_plan(
     current_chars = 0
 
     for section in by_score:
+        # Oversized sections get their own dedicated batch
+        if section.oversized:
+            # Flush any accumulated sections first
+            if current_sections:
+                current_sections.sort(key=lambda s: s.section_idx)
+                batches.append(
+                    SectionBatch(
+                        batch_idx=len(batches),
+                        sections=current_sections,
+                        total_chars=current_chars,
+                    )
+                )
+                current_sections = []
+                current_chars = 0
+            batches.append(
+                SectionBatch(
+                    batch_idx=len(batches),
+                    sections=[section],
+                    total_chars=section.char_count,
+                    contains_oversized=True,
+                )
+            )
+            continue
+
         cost = section.char_count + 2  # \n\n separator
         if current_chars + cost > budget and current_sections:
             # Flush current batch — sort by document order

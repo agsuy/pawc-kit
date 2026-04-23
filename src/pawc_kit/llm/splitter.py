@@ -118,23 +118,36 @@ class CodeChunk:
 # ---------------------------------------------------------------------------
 
 
-def split_code(content: str, *, filename: str) -> list[CodeChunk]:
+def split_code(
+    content: str,
+    *,
+    filename: str,
+    max_chunk_chars: int | None = None,
+) -> list[CodeChunk]:
     """Split *content* into AST-aware code chunks.
 
     Uses tree-sitter when a grammar is available for *filename*'s extension,
     otherwise falls back to regex splitting.
+
+    When *max_chunk_chars* is provided, chunks larger than this limit have
+    ``oversized=True``.  Without it, all chunks have ``oversized=False``
+    (backward compatible).
     """
     from pawc_kit.llm.ast_utils import build_scope_prefix, parse_code
 
     source = content.encode()
     tree = parse_code(source, filename)
     if tree is None:
-        return _regex_code_split(content, filename)
-    return _ast_split(tree, source, filename)
+        return _regex_code_split(content, filename, max_chunk_chars=max_chunk_chars)
+    return _ast_split(tree, source, filename, max_chunk_chars=max_chunk_chars)
 
 
 def _ast_split(
-    tree: object, source: bytes, filename: str
+    tree: object,
+    source: bytes,
+    filename: str,
+    *,
+    max_chunk_chars: int | None = None,
 ) -> list[CodeChunk]:
     """Walk the AST and produce chunks at function/class boundaries."""
     from pawc_kit.llm.ast_utils import _get_signature, build_scope_prefix
@@ -196,10 +209,11 @@ def _ast_split(
         prefix: str,
         name: str | None = None,
     ) -> CodeChunk:
+        decoded = text.decode()
         return CodeChunk(
-            content=text.decode(),
+            content=decoded,
             prefix=prefix,
-            oversized=False,
+            oversized=max_chunk_chars is not None and len(decoded) > max_chunk_chars,
             node_type=node.type,  # type: ignore[union-attr]
             start_byte=node.start_byte,  # type: ignore[union-attr]
             end_byte=node.end_byte,  # type: ignore[union-attr]
@@ -285,10 +299,11 @@ def _ast_split(
     if trailing:
         if chunks:
             last = chunks[-1]
+            merged = last.content + trailing.decode()
             chunks[-1] = CodeChunk(
-                content=last.content + trailing.decode(),
+                content=merged,
                 prefix=last.prefix,
-                oversized=last.oversized,
+                oversized=max_chunk_chars is not None and len(merged) > max_chunk_chars,
                 node_type=last.node_type,
                 start_byte=last.start_byte,
                 end_byte=last.end_byte,
@@ -297,11 +312,12 @@ def _ast_split(
                 name=last.name,
             )
         else:
+            decoded = trailing.decode()
             chunks.append(
                 CodeChunk(
-                    content=trailing.decode(),
+                    content=decoded,
                     prefix=f"# file: {filename}",
-                    oversized=False,
+                    oversized=max_chunk_chars is not None and len(decoded) > max_chunk_chars,
                     node_type="module",
                     start_byte=0,
                     end_byte=len(source),
@@ -312,11 +328,12 @@ def _ast_split(
 
     # If no chunks produced, return whole file as one chunk
     if not chunks:
+        text = content if isinstance(content, str) else source.decode()
         chunks.append(
             CodeChunk(
-                content=content if isinstance(content, str) else source.decode(),
+                content=text,
                 prefix=f"# file: {filename}",
-                oversized=False,
+                oversized=max_chunk_chars is not None and len(text) > max_chunk_chars,
                 node_type="module",
                 start_byte=0,
                 end_byte=len(source),
@@ -333,14 +350,19 @@ def _ast_split(
 # ---------------------------------------------------------------------------
 
 
-def _regex_code_split(content: str, filename: str) -> list[CodeChunk]:
+def _regex_code_split(
+    content: str,
+    filename: str,
+    *,
+    max_chunk_chars: int | None = None,
+) -> list[CodeChunk]:
     """Fallback when no tree-sitter grammar is available."""
     raw_chunks = _regex_split(content, 2000)
     return [
         CodeChunk(
             content=chunk,
             prefix=f"# file: {filename}",
-            oversized=False,
+            oversized=max_chunk_chars is not None and len(chunk) > max_chunk_chars,
             node_type="unknown",
             start_byte=0,
             end_byte=0,

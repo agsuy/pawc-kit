@@ -53,6 +53,8 @@ class LosslessLayer:
         filename: str | None = None,
         budget: int | None = None,
         content_type: str | None = None,
+        scored_sections: object | None = None,
+        task_scores: list[float] | None = None,
     ) -> tuple[str, str | None]:
         text = content
         text = _HTML_COMMENT.sub("", text)

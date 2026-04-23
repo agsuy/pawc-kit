@@ -435,6 +435,28 @@ _CATEGORY_ACTIONS: dict[ContentCategory, dict[CompressionLevel, Callable[[str], 
 }
 
 
+# Ordered levels for per-chunk adjustment (index → aggressiveness)
+_LEVEL_ORDER: list[CompressionLevel] = [
+    CompressionLevel.NONE,
+    CompressionLevel.LIGHT,
+    CompressionLevel.MODERATE,
+    CompressionLevel.AGGRESSIVE,
+    CompressionLevel.EMERGENCY,
+]
+
+_SIG_LINE = re.compile(r"^\s*((?:async\s+)?(?:def|class)\s+\w+)", re.MULTILINE)
+
+
+def _first_sig_line(text: str) -> str | None:
+    """Extract the first function/class signature prefix for matching.
+
+    Returns a normalised key like ``def my_func`` or ``class MyClass``
+    that is stable across minor whitespace/comment cleanup.
+    """
+    m = _SIG_LINE.search(text)
+    return m.group(1).strip() if m else None
+
+
 # ---------------------------------------------------------------------------
 # AdaptiveCompressionLayer
 # ---------------------------------------------------------------------------
@@ -448,6 +470,11 @@ class AdaptiveCompressionLayer:
     transformations: code format escalation (compact → minified → outlined
     → signatures), prose truncation, or data sampling.
 
+    When ``scored_sections`` is provided and the content is code, per-chunk
+    compression is applied: high-importance chunks are capped at LIGHT,
+    medium-importance chunks use the file level, and low-importance chunks
+    go one level more aggressive.
+
     Content type is determined via magika detection (explicit
     ``content_type`` overrides when provided).
 
@@ -459,11 +486,15 @@ class AdaptiveCompressionLayer:
         self,
         thresholds: AdaptiveThresholds | None = None,
         strategy: str = "balanced",
+        importance_high: int = 80,
+        importance_low: int = 50,
     ) -> None:
         if thresholds is not None:
             self._thresholds = thresholds
         else:
             self._thresholds = STRATEGY_THRESHOLDS.get(strategy, STRATEGY_THRESHOLDS["balanced"])
+        self._importance_high = importance_high
+        self._importance_low = importance_low
 
     def _select_level(self, ratio: float) -> CompressionLevel:
         if ratio >= self._thresholds.emergency:
@@ -476,6 +507,26 @@ class AdaptiveCompressionLayer:
             return CompressionLevel.LIGHT
         return CompressionLevel.NONE
 
+    def _adjust_level_for_score(
+        self, file_level: CompressionLevel, score: int
+    ) -> CompressionLevel:
+        """Adjust compression level based on chunk importance score.
+
+        - Score >= high threshold: cap at LIGHT (preserve important chunks).
+        - Score in [low, high): use file-level (default behaviour).
+        - Score < low threshold: one level more aggressive than file-level.
+        """
+        if score >= self._importance_high:
+            # High importance: no worse than LIGHT
+            if _LEVEL_ORDER.index(file_level) > _LEVEL_ORDER.index(CompressionLevel.LIGHT):
+                return CompressionLevel.LIGHT
+            return file_level
+        if score < self._importance_low:
+            # Low importance: one level more aggressive
+            idx = _LEVEL_ORDER.index(file_level)
+            return _LEVEL_ORDER[min(idx + 1, len(_LEVEL_ORDER) - 1)]
+        return file_level
+
     def apply(
         self,
         content: str,
@@ -483,37 +534,109 @@ class AdaptiveCompressionLayer:
         filename: str | None = None,
         budget: int | None = None,
         content_type: str | None = None,
+        scored_sections: object | None = None,
+        task_scores: list[float] | None = None,
     ) -> tuple[str, str | None]:
         if budget is None or len(content) <= budget:
             return content, None
 
         ratio = len(content) / budget
-        level = self._select_level(ratio)
+        file_level = self._select_level(ratio)
 
-        if level is CompressionLevel.NONE:
+        if file_level is CompressionLevel.NONE:
             return content, None
 
         category = detect_category(content, filename=filename, content_type=content_type)
 
-        # Code: use tree-sitter functions (which fall back to regex internally)
+        # Per-chunk compression for code with scored sections
+        if category == "code" and scored_sections and filename:
+            result = self._apply_per_chunk(
+                content, file_level, scored_sections, filename  # type: ignore[arg-type]
+            )
+            if result is not None:
+                return result, f"adaptive_code_{file_level.value}"
+
+        # Uniform compression (original behaviour)
         if category == "code":
-            if level is CompressionLevel.LIGHT:
-                compressed = _code_compact(content)
-            elif level is CompressionLevel.MODERATE:
-                compressed = _code_strip_comments(content, filename=filename)
-            elif level is CompressionLevel.AGGRESSIVE:
-                compressed = _code_outlined_ts(content, filename=filename)
-            else:  # EMERGENCY
-                compressed = _code_signatures_ts(content, filename=filename)
+            compressed = self._compress_code(content, file_level, filename)
         else:
             actions = _CATEGORY_ACTIONS.get(category, _PROSE_ACTIONS)
-            action = actions.get(level)
+            action = actions.get(file_level)
             if action is None:
                 return content, None
             compressed = action(content)
 
-        layer_name = f"adaptive_{category}_{level.value}"
+        layer_name = f"adaptive_{category}_{file_level.value}"
         return compressed, layer_name
+
+    def _compress_code(
+        self, text: str, level: CompressionLevel, filename: str | None
+    ) -> str:
+        if level is CompressionLevel.LIGHT:
+            return _code_compact(text)
+        if level is CompressionLevel.MODERATE:
+            return _code_strip_comments(text, filename=filename)
+        if level is CompressionLevel.AGGRESSIVE:
+            return _code_outlined_ts(text, filename=filename)
+        return _code_signatures_ts(text, filename=filename)
+
+    def _apply_per_chunk(
+        self,
+        content: str,
+        file_level: CompressionLevel,
+        scored_sections: list,
+        filename: str,
+    ) -> str | None:
+        """Apply per-chunk compression based on section importance scores.
+
+        Re-splits the content with ``split_code()`` and matches each chunk
+        to a scored section by its first significant line (function/class
+        signature).  Unmatched chunks use the file-level compression.
+
+        Returns ``None`` if per-chunk logic provides no benefit over uniform
+        compression (e.g., all chunks map to the same level, or only one
+        chunk).
+        """
+        from pawc_kit.llm.splitter import split_code
+
+        # Build score lookup: first significant line → score
+        score_map: dict[str, int] = {}
+        for ss in scored_sections:
+            key = _first_sig_line(ss.content)
+            if key:
+                score_map[key] = ss.score
+
+        if not score_map:
+            return None
+
+        chunks = split_code(content, filename=filename)
+        if len(chunks) <= 1:
+            return None  # single chunk — uniform is fine
+
+        parts: list[str] = []
+        any_adjusted = False
+
+        for chunk in chunks:
+            key = _first_sig_line(chunk.content)
+            score = score_map.get(key) if key else None
+
+            if score is not None:
+                level = self._adjust_level_for_score(file_level, score)
+            else:
+                level = file_level
+
+            if level != file_level:
+                any_adjusted = True
+
+            if level is CompressionLevel.NONE:
+                parts.append(chunk.content)
+            else:
+                parts.append(self._compress_code(chunk.content, level, filename))
+
+        if not any_adjusted:
+            return None  # no per-chunk benefit
+
+        return "\n\n".join(parts)
 
 
 __all__ = [
